@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "microstock-generator"
+version = "2.0.0"
+description = "Universal cross-platform automated pipeline for generating, upscaling, cutouts, and validating commercial microstock assets (Adobe Stock, Shutterstock, Freepik, etc.)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Contributors" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Graphics",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Other Audience",
+]
+dependencies = [
+    "pillow>=10.0.0",
+    "rembg>=2.0.50",
+    "opencv-python-headless>=4.8.0",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "PyMatting>=1.1.0",
+    "imagehash>=4.3.1",
+    "pyyaml>=6.0.0",
+    "python-dotenv>=1.0.0",
+    "tqdm>=4.66.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

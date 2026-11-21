@@ -1,0 +1,67 @@
+# ==============================================================================
+# Microstock Generator - Automation Pipeline Configuration Template
+# Universal compliance: Adobe Stock, Shutterstock, Freepik, Getty Images, etc.
+# ==============================================================================
+
+paths:
+  # Default source directory: '~/Desktop/microstock_generator'
+  # (Can be customized here or overridden using --input / -i CLI flag)
+  base_dir: "~/Desktop/microstock_generator"
+
+  # Default output directory: null saves to <batch>/result/ inside base_dir
+  # Or set an explicit directory path (e.g. "~/Desktop/microstock_generator/output")
+  output_dir: null
+
+  # Upscayl binary and models directory (leave null for cross-platform auto-discovery)
+  upscayl_bin: null
+  models_dir: null
+
+generation:
+  model: "imagen-3.0-generate-002"
+  aspect_ratio_isolated: "1:1"
+  aspect_ratio_scene: "3:2"
+  number_of_images: 4
+  max_images_per_run: 20
+  api_retry_delay: 5
+  max_api_retries: 3
+
+upscaling:
+  scale: 4
+  skip_upscale: false
+  models:
+    isolated: "ultramix-balanced-4x"
+    scene: "high-fidelity-4x"
+    fallback: "ultramix-balanced-4x"
+
+segmentation:
+  remove_bg: true                     # Toggle background removal (true/false)
+  bg_output_dir: null                 # Optional separate folder for transparent cutouts
+  bg_model: "birefnet-general-lite"
+  fallback_bg_model: "isnet-general-use"
+  alpha_low_cut: 40
+  alpha_high_snap: 200
+  guided_filter_radius: 3
+  feather_radius: 0.8
+  cleanup_stray_pixels: true
+  stray_pixel_min_area: 50
+  color_decontaminate: true
+  tight_crop: true
+  tight_crop_margin_pct: 0.03
+  auto_reupscale_if_under_4mp: true
+
+validation:
+  min_megapixels: 4.0
+  max_megapixels: 100.0
+  max_file_size_mb: 45.0
+  max_filename_chars: 30
+  srgb_enforcement: true
+  jpeg_quality: 95
+  dedup_phash_threshold: 6
+
+metadata:
+  gemini_text_model: "gemini-2.5-flash"
+  max_title_chars: 70
+  min_keywords: 25
+  max_keywords: 50
+  strip_forbidden_words: true
+  export_csv: false

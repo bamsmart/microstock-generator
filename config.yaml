@@ -1,0 +1,68 @@
+# ==============================================================================
+# Microstock Generator - Automation Pipeline Configuration
+# Universal compliance: Adobe Stock, Shutterstock, Freepik, Getty Images, etc.
+# ==============================================================================
+
+paths:
+  # Default source directory: '~/Desktop/microstock_generator'
+  # (Can be customized here or overridden using --input / -i CLI flag)
+  base_dir: "~/Desktop/microstock_generator"
+
+  # Default output directory: null saves to <batch>/result/ inside base_dir
+  # Or set an explicit directory path (e.g. "~/Desktop/microstock_generator/output")
+  output_dir: null
+
+  # Upscayl binary and models directory (leave null for cross-platform auto-discovery)
+  upscayl_bin: null
+  models_dir: null
+
+generation:
+  model: "imagen-3.0-generate-002"
+  aspect_ratio_isolated: "1:1"
+  aspect_ratio_scene: "3:2"
+  number_of_images: 4
+  max_images_per_run: 20
+  api_retry_delay: 5
+  max_api_retries: 3
+
+upscaling:
+  scale: 4
+  skip_upscale: false                 # Set true to bypass upscaling if images already exceed 4 MP
+  models:
+    isolated: "ultramix-balanced-4x"  # Balanced realism & crisp edges (no plastic texture)
+    scene: "high-fidelity-4x"         # Optimal for photorealistic scenes & textures
+    fallback: "ultramix-balanced-4x"
+
+segmentation:
+  # Background removal for Isolated PNGs
+  remove_bg: true                     # Set false to disable background removal entirely
+  bg_output_dir: null                 # Optional separate directory to store transparent cutouts
+  bg_model: "birefnet-general-lite"   # Fast SOTA BiRefNet-Lite (224MB, zero OOM on CPU)
+  fallback_bg_model: "isnet-general-use"
+  alpha_low_cut: 40                   # Kill faint shadows/haze (<= 40 -> 0)
+  alpha_high_snap: 200                # Ensure 100% solid interior (>= 200 -> 255)
+  guided_filter_radius: 3             # Edge-aware alpha alignment to 4K RGB
+  feather_radius: 0.8                 # Subtle edge smoothing
+  cleanup_stray_pixels: true          # Remove tiny floating debris/islands
+  stray_pixel_min_area: 50            # Minimum contour area to keep (pixels)
+  color_decontaminate: true           # Nearest-foreground RGB extrapolation (anti-halo)
+  tight_crop: true                    # Crop empty space around isolated subject
+  tight_crop_margin_pct: 0.03         # 3% breathing margin around subject
+  auto_reupscale_if_under_4mp: true   # Guard if tight crop shrinks image below 4 MP
+
+validation:
+  min_megapixels: 4.0                # Adobe Stock strict minimum
+  max_megapixels: 100.0              # Adobe Stock strict maximum
+  max_file_size_mb: 45.0             # Adobe Stock upload file limit
+  max_filename_chars: 30             # Max filename length for CSV upload (including .jpg/.png)
+  srgb_enforcement: true             # Ensure sRGB IEC61966-2.1 color profile
+  jpeg_quality: 95                   # High quality JPEG for scenes
+  dedup_phash_threshold: 6           # Hamming distance threshold for duplicate rejection
+
+metadata:
+  gemini_text_model: "gemini-2.5-flash"
+  max_title_chars: 70                # Adobe Stock max title characters
+  min_keywords: 25
+  max_keywords: 50                   # Adobe Stock max keywords
+  strip_forbidden_words: true        # Enforce no "AI", brand names, artist names
+  export_csv: false                  # Output image files only (no CSV/JSON)
