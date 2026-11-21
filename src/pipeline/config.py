@@ -104,12 +104,16 @@ class PipelineConfig:
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
-def _resolve_path(raw_path: str, base_root: Path = PROJECT_ROOT) -> Path:
-    """Resolve a path safely, handling ~ (home) and relative paths."""
-    expanded = os.path.expanduser(str(raw_path))
+def _resolve_path(raw_path: Any, base_root: Path = PROJECT_ROOT) -> Optional[Path]:
+    """Resolve a path safely, expanding ~ (home) and environment variables."""
+    if not raw_path:
+        return None
+    expanded = os.path.expandvars(os.path.expanduser(str(raw_path).strip()))
     p = Path(expanded)
     if not p.is_absolute():
         p = (base_root / p).resolve()
+    else:
+        p = p.resolve()
     return p
 
 

@@ -31,15 +31,18 @@ def sanitize_filename(base_name: str, ext: str = ".png", max_len: int = 30) -> s
     Sanitize filename to be strictly <= max_len characters (including extension).
     Only allows lowercase alphanumeric characters and hyphens/underscores.
     """
-    ext = ext.lower()
-    if not ext.startswith("."):
-        ext = f".{ext}"
+    if ext:
+        ext = ext.lower()
+        if not ext.startswith("."):
+            ext = f".{ext}"
+    else:
+        ext = ""
 
     # Clean base name
     clean = re.sub(r"[^a-zA-Z0-9_\-]", "_", base_name).strip("_-").lower()
     clean = re.sub(r"_{2,}", "_", clean)
 
-    allowed_base_len = max_len - len(ext)
+    allowed_base_len = max(1, max_len - len(ext))
     if len(clean) > allowed_base_len:
         clean = clean[:allowed_base_len].rstrip("_-")
 

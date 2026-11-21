@@ -36,8 +36,14 @@ class ManifestManager:
     def save(self):
         self.manifest_file.parent.mkdir(parents=True, exist_ok=True)
         self.data["updated_at"] = datetime.now().isoformat()
-        with open(self.manifest_file, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=2, ensure_ascii=False)
+        temp_file = self.manifest_file.with_suffix(".tmp")
+        try:
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, indent=2, ensure_ascii=False)
+            temp_file.replace(self.manifest_file)
+        except Exception:
+            if temp_file.exists():
+                temp_file.unlink(missing_ok=True)
 
     def is_processed(self, file_hash: str) -> bool:
         return file_hash in self.data.get("records", {})

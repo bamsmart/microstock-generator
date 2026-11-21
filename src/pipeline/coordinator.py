@@ -14,7 +14,7 @@ import shutil
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 from .config import PipelineConfig, load_config
 from .dedup import filter_near_duplicates
@@ -31,7 +31,8 @@ def classify_asset_type(image_path: Path) -> str:
     - 'scene': Full-scene / dark / textured / environmental background -> sRGB JPEG
     """
     try:
-        with Image.open(image_path) as img:
+        with Image.open(image_path) as raw_img:
+            img = ImageOps.exif_transpose(raw_img)
             rgb = img.convert("RGB")
             rgb.thumbnail((256, 256))
             arr = np.array(rgb)

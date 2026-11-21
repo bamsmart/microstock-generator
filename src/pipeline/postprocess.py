@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Tuple
 import numpy as np
 import cv2
-from PIL import Image, ImageCms
+from PIL import Image, ImageCms, ImageOps
 import rembg
 
 from .config import PipelineConfig
@@ -447,7 +447,8 @@ class PostProcessor:
         5. Nearest-Foreground RGB Decontamination + Tight Crop + 4MP/45MB Guard
         """
         try:
-            with Image.open(input_image_path) as raw_img:
+            with Image.open(input_image_path) as raw_img_file:
+                raw_img = ImageOps.exif_transpose(raw_img_file)
                 raw_rgb = np.array(raw_img.convert("RGB"))
                 session = self.get_bg_session(log_callback=log_callback)
                 res = rembg.remove(raw_img, session=session, alpha_matting=False)
@@ -538,7 +539,8 @@ class PostProcessor:
         3. Save with quality=95, optimize=True, subsampling=0 (4:4:4)
         """
         try:
-            with Image.open(input_image_path) as raw_img:
+            with Image.open(input_image_path) as raw_img_file:
+                raw_img = ImageOps.exif_transpose(raw_img_file)
                 rgb_img = raw_img.convert("RGB")
                 output_image_path.parent.mkdir(parents=True, exist_ok=True)
 

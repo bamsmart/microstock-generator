@@ -5,7 +5,7 @@ Prevents "Similar Content" rejections by Adobe Stock reviewers.
 
 from pathlib import Path
 from typing import List, Tuple, Set
-from PIL import Image
+from PIL import Image, ImageOps
 
 try:
     import imagehash
@@ -15,7 +15,8 @@ except ImportError:
 
 def compute_phash(img_path: Path) -> str:
     """Compute perceptual hash for an image."""
-    with Image.open(img_path) as img:
+    with Image.open(img_path) as raw_img:
+        img = ImageOps.exif_transpose(raw_img)
         img_rgb = img.convert("RGB")
         if imagehash is not None:
             return str(imagehash.phash(img_rgb))

@@ -73,8 +73,16 @@ def get_available_input_folders(base_dir: Path):
 
 
 def ensure_desktop_launchers(base_dir: Path, project_root: Path):
-    """Generates 1-click execution shortcuts directly inside the desktop working directory."""
+    """Generates 1-click execution shortcuts inside the default desktop working directory."""
+    desktop = Path.home() / "Desktop"
     try:
+        resolved_base = base_dir.resolve()
+        # Avoid deploying launchers into arbitrary custom input folders
+        if desktop.exists() and (resolved_base == (desktop / "microstock_generator") or desktop in resolved_base.parents):
+            pass
+        else:
+            return
+
         base_dir.mkdir(parents=True, exist_ok=True)
         # macOS 1-click launcher
         mac_launcher = base_dir / "Run_Microstock_Generator.command"
