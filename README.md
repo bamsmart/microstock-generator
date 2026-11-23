@@ -1,231 +1,195 @@
 # Microstock Generator 🚀
 
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-green.svg)](#quick-start-zero-coding-required)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-green.svg)](#quick-start-1-click-launchers)
 [![Stock Compliance](https://img.shields.io/badge/compliance-Adobe%20Stock%20%7C%20Shutterstock%20%7C%20Freepik%20%7C%20Getty-orange.svg)](#microstock-compliance-cheat-sheet)
+[![Cost](https://img.shields.io/badge/cost-100%25%20Free--Tier%20%2F%20%240-brightgreen.svg)](#free-tier-ai-setup-optional-0)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An automated, **100% local and offline** production pipeline that converts raw photos, illustrations, and AI-generated artwork into commercial stock assets ready for instant submission to **Adobe Stock, Shutterstock, Freepik, Getty Images / iStock, Vecteezy**, and more.
+A **$0 / Free-Tier Hybrid Microstock Automation Pipeline** that covers **high-demand seasonal research**, **commercial-grade prompt generation**, **Free-Tier Vision QC & ultra-specific Adobe Stock SEO metadata**, **4x AI super-resolution**, **anti-halo transparent cutouts**, **CSV/IPTC export**, **plain-text `.txt` run logs**, and **optional SFTP upload** for **Adobe Stock, Shutterstock, Freepik, Getty Images / iStock**, and more.
 
-> 💡 **Designed for Everyone:** Run bulk batches with a single double-click (no coding needed) or automate advanced workflows with flexible CLI flags.
+> 💡 **1-Click Hybrid Workflow:** Double-click `Run_Step1_Research.command` to get copy-paste commercial prompts → generate & drop images into `raw/` → double-click `Run_Microstock_Generator.command` for production-ready assets + `adobe_stock_metadata.csv` → upload via Drag & Drop + `Upload CSV` (or `Run_Step5_Upload.command` via SFTP).
 
 ---
 
 ## 📑 Table of Contents
 1. [Core Capabilities](#core-capabilities)
-2. [4-Stage Processing Pipeline](#4-stage-processing-pipeline)
-3. [Quick Start (Zero Coding Required)](#quick-start-zero-coding-required)
-4. [Folder Structure Workflows](#folder-structure-workflows)
-5. [Power User & Command-Line Usage](#power-user--command-line-usage)
-6. [Configuration (`config.yaml`)](#configuration-configyaml)
-7. [Microstock Compliance Cheat-Sheet](#microstock-compliance-cheat-sheet)
-8. [Troubleshooting & FAQ](#troubleshooting--faq)
-9. [License](#license)
+2. [End-to-End Hybrid Workflow](#end-to-end-hybrid-workflow)
+3. [Quick Start (1-Click Launchers)](#quick-start-1-click-launchers)
+4. [Free-Tier AI Setup (Optional, $0)](#free-tier-ai-setup-optional-0)
+5. [Folder Structure Workflows](#folder-structure-workflows)
+6. [CLI Reference & Scheduled Automation](#cli-reference--scheduled-automation)
+7. [Configuration (`config.yaml`)](#configuration-configyaml)
+8. [Microstock Compliance Cheat-Sheet](#microstock-compliance-cheat-sheet)
+9. [Security & Secret Protection](#security--secret-protection)
+10. [Troubleshooting & FAQ](#troubleshooting--faq)
+11. [License](#license)
 
 ---
 
 ## Core Capabilities
 
-Submitting raw assets directly to microstock agencies often causes rejections due to white fringes, wrong color spaces, or non-compliant dimensions. Microstock Generator automates complete technical compliance:
-
-- ✂️ **True Anti-Halo Cutouts:** Combines BiRefNet-Lite segmentation, edge-aware Guided Filtering, and mathematical color de-contamination (un-premultiplication) to permanently eliminate white halos on isolated PNGs.
-- 🎨 **Smart Auto-Classification:** Inspects image borders to automatically route studio assets to transparent PNGs and complex environments to sRGB JPEGs.
-- ⚡ **AI Super-Resolution:** Integrates with local Upscayl 4x models to guarantee 4 MP – 100 MP microstock standards without cloud fees or quality loss.
-- 🛡️ **Auto-Sanitization & QA Guard:** Sanitizes messy filenames to safe alphanumeric characters ($\le 30$ chars), enforces file size limits ($< 45$ MB), embeds sRGB IEC61966-2.1 ICC profiles, and deduplicates frames via pHash.
-- 🔒 **100% Offline & Private:** Zero external API calls for processing. Your original intellectual property never leaves your local hardware.
+- 📈 **Step 1 — High-Demand Seasonal Research (`--research`):** Targets the **H-60 to H-90 buyer window** (what commercial buyers search 2–3 months ahead), pulls live Google Trends RSS signals, and synthesizes copyright-safe, copy-paste commercial prompts (with `Suggested File` ≤ 30 chars) into `~/Desktop/microstock_generator/prompts/`.
+- 🧠 **Free-Tier Cloud AI Router ($0, Zero Credit Card):** Automatically routes text & vision tasks across free-tier providers with built-in RPM throttling and fallback (**Groq → Gemini Flash → Mistral → OpenRouter `:free`**), plus deterministic offline fallbacks when no API key is configured.
+- 🔍 **Single-Call Vision QC + Page-1 Adobe Stock SEO:** Audits raw AI images **before** upscaling (rejecting bad hands, garbled text, artifacts into `rejected_ai_qa/`) while simultaneously generating ultra-specific Titles (≤ 70 chars, no commas), 3-tier ranked Keywords (35–45, blocking generic filler spam), Category IDs (1–21), and SEO Filenames (≤ 30 chars).
+- ✂️ **True Anti-Halo Cutouts:** Combines BiRefNet-Lite segmentation, edge-aware Guided Filtering, Color-Projection Matting, and mathematical white-matte un-premultiplication to eliminate white halos on isolated PNGs.
+- ⚡ **AI Super-Resolution:** Integrates with local Upscayl 4x models (`ultramix-balanced-4x` for isolated, `high-fidelity-4x` for scenes) to guarantee 4 MP – 100 MP microstock standards.
+- 🏷️ **Adobe Stock CSV + IPTC/XMP + `.txt` Logs:** Exports official `adobe_stock_metadata.csv` (UTF-8), embeds IPTC/XMP metadata via ExifTool (when installed), tracks SHA-256 history in `manifest.json`, and writes human-readable run reports to `logs/run_*.txt`.
+- 📤 **Step 5 — Optional SFTP Upload & Daily Scheduler:** Supports `sftp.contributor.adobestock.com` (Paramiko or system `curl` SFTP fallback) with anti-duplicate upload tracking and optional macOS `launchd` nightly scheduling.
 
 ---
 
-## 4-Stage Processing Pipeline
-
-The pipeline mirrors the exact 4-stage execution logged in the terminal:
+## End-to-End Hybrid Workflow
 
 ```mermaid
 flowchart TD
-    A["Raw Images<br>(~/Desktop/microstock_generator)"] --> B["[1/4] pHash Deduplication<br>Filters near-identical frames to rejected_similar/"]
-    
-    B --> C{"Classification<br>(Auto / Manual)"}
-    C -->|"Studio / Near-White Border"| D1["[2/4] Upscayl 4x<br>(Ultramix-Balanced Model)"]
-    C -->|"Full Environment / Scene"| D2["[2/4] Upscayl 4x<br>(High-Fidelity Model)"]
-
-    D1 --> E1["[3/4] Edge-Perfection Post-Process<br>• BiRefNet-Lite Segmentation<br>• Guided Filter Alpha Snapping<br>• Anti-Halo White Matte Stripping<br>• Debris Removal & Tight Crop"]
-    D2 --> E2["[3/4] Scene Mastering Post-Process<br>• Embed sRGB IEC61966-2.1 Profile<br>• 95% High-Quality JPEG (4:4:4 Chroma)"]
-
-    E1 --> F["[4/4] Technical QA & Auto-Sanitize<br>• Sanitize Filename (<= 30 chars, safe ASCII)<br>• Validate 4 MP <= Resolution <= 100 MP<br>• Validate File Size < 45 MB"]
-    E2 --> F
-
-    F -->|"PASSED ✅"| G["result/<br>Ready for Contributor Portal!"]
-    F -->|"FAILED ❌"| H["rejected_qa/<br>(Review & Adjust)"]
+    S1["Step 1: Run_Step1_Research.command<br>H-60..H-90 Calendar + Trends + Free-Tier LLM"] --> P1["~/Desktop/microstock_generator/prompts/<br>prompts_*.txt (Copy-Paste + Suggested File)"]
+    P1 --> S2["Step 2 & 3 (Manual Hybrid)<br>Generate images & save to <batch>/raw/"]
+    S2 --> B["[1/5] pHash Deduplication<br>Filters similar frames -> rejected_similar/"]
+    B --> V["[2/5] Free-Tier Vision QC + SEO Metadata<br>Gemini Flash / OpenRouter :free<br>Defective AI -> rejected_ai_qa/"]
+    V --> U["[3/5] Upscayl 4x Super-Resolution<br>Isolated (Ultramix) vs Scene (High-Fidelity)"]
+    U --> PP["[4/5] High-Precision Post-Processing<br>Anti-Halo Transparent PNG / sRGB 95% JPEG"]
+    PP --> QA["[5/5] Technical QA + ExifTool IPTC + CSV<br>4-100 MP, <= 45 MB, <= 30 char filename"]
+    QA -->|"PASSED ✅"| RES["result/<br>Images + adobe_stock_metadata.csv + manifest.json"]
+    QA -->|"FAILED ❌"| REJ["rejected_qa/"]
+    RES --> UP["Step 5: Upload to Adobe Stock<br>Drag & Drop + Upload CSV (or SFTP via Run_Step5_Upload.command)"]
+    UP --> LOG["logs/run_*.txt<br>Plain-text summary report"]
 ```
 
 ---
 
-## Quick Start (Zero Coding Required)
+## Quick Start (1-Click Launchers)
 
-### Step 1: Install Prerequisites (One-Time Setup)
+### Step 0: One-Time Prerequisites
+1. **Python 3.10, 3.11, or 3.12** (`brew install python@3.11` on macOS).
+2. **Upscayl** (free local 4x upscaler): Download from [upscayl.org](https://www.upscayl.org/) or `brew install --cask upscayl`.
+3. *(Optional)* **ExifTool** for inline IPTC/XMP embedding: `brew install exiftool`.
 
-1. **Python 3.10, 3.11, or 3.12:**
-   - **macOS:** Download from [python.org](https://www.python.org/) or install via `brew install python@3.11`.
-   - **Windows:** Download from [python.org](https://www.python.org/).  
-     *(⚠️ Make sure to check **"Add python.exe to PATH"** during installation).*
-   - **Linux:** Install via package manager (`sudo apt install python3 python3-venv python3-pip`).
+### 1-Click Launchers (macOS)
 
-2. **Upscayl (Free AI Super-Resolution):**
-   - Download the installer from [upscayl.org](https://www.upscayl.org/).
-   - The engine automatically detects Upscayl in default OS application directories.  
-     *(Optional: Pass `--skip-upscale` if your images already exceed 4 MP or your machine lacks a GPU).*
-
----
-
-### Step 2: 1-Click Launch
-
-| Operating System | Launcher File | Action |
+| Step | 1-Click Launcher | What It Does |
 |---|---|---|
-| **macOS** | `Run_Microstock_Generator.command` | Double-click to run *(Right-click → Open on first run)* |
-| **Windows** | `run.bat` | Double-click to run |
-| **Linux** | `run.sh` | Run `./run.sh` in terminal |
+| **Step 1** | `Run_Step1_Research.command` | Runs high-demand research, saves `prompts_*.txt` to `~/Desktop/microstock_generator/prompts/`, and opens it automatically for copy-paste. |
+| **Step 4** | `Run_Microstock_Generator.command` | Processes all `<batch>/raw/` folders (Dedup → Vision QC & SEO → Upscayl 4x → Anti-Halo/sRGB → `adobe_stock_metadata.csv` + `.txt` log) with `caffeinate -i` sleep prevention. |
+| **Step 5** | `Run_Step5_Upload.command` | Uploads pending `result/` assets to Adobe Stock SFTP (for qualified SFTP accounts) with anti-duplicate tracking. |
 
-> 🪄 **Self-Healing Environment:** Launchers automatically create, verify, and maintain their local virtual environment (`.venv`). If you ever rename or move the project folder, the launcher automatically fixes stale paths without manual intervention.
+> 🪟 **Windows / Linux:** Use `run.bat` (Windows) or `./run.sh` (Linux/macOS). Launchers auto-create and self-heal `.venv`.
 
 ---
 
-### Step 3: Place Images & Collect Results
+## Free-Tier AI Setup (Optional, $0)
 
-1. On first launch, the app creates your desktop workspace:
-   ```text
-   ~/Desktop/microstock_generator/
+Without API keys, Step 1 uses curated H-60..H-90 commercial blueprints and Step 4 uses offline `LocalMetadataEngine`. For **live AI prompt synthesis** and **Vision QC + hyper-specific SEO metadata** (at **$0 / no credit card**):
+
+1. Copy `.env.example` to `.env`:
+   ```bash
+   cp .env.example .env
    ```
-2. Place raw images into `~/Desktop/microstock_generator/` (or inside batch subfolders).
-3. Run the launcher again.
-4. Retrieve your validated assets directly from the generated **`result/`** folder!
+2. Add your free-tier keys inside `.env`:
+   - `GEMINI_API_KEY` — Primary Vision QC + SEO Metadata ([Google AI Studio](https://aistudio.google.com/apikey))
+   - `GROQ_API_KEY` — Primary fast 70B LLM for Step 1 Research ([Groq Console](https://console.groq.com/keys))
+   - `MISTRAL_API_KEY` *(optional)* — Fallback text provider ([Mistral](https://console.mistral.ai/))
+   - `OPENROUTER_API_KEY` *(optional)* — Fallback `:free` Vision & text provider ([OpenRouter](https://openrouter.ai/keys))
+   - `ADOBE_SFTP_USER` & `ADOBE_SFTP_PASS` *(optional, Step 5)* — From Adobe Stock Contributor Portal → Upload → SFTP (for qualified accounts).
 
 ---
 
 ## Folder Structure Workflows
 
-Microstock Generator automatically accommodates two organizational styles:
-
-### Workflow A: Single-Folder Mode (Fastest)
-Place raw images directly into the main desktop folder:
 ```text
 ~/Desktop/microstock_generator/
-├── Run_Microstock_Generator.command    # Auto-generated desktop launcher
-├── Run_Microstock_Generator.bat        # Auto-generated Windows shortcut
-├── portrait.jpg                        # Raw input image
-├── product_photo.png                   # Raw input image
-└── result/                             # 🏁 Validated production assets
-    ├── portrait.jpg                    # Full-scene mastered sRGB JPEG
-    └── product_photo.png               # Clean transparent PNG cutout
-```
-
-### Workflow B: Batch Subfolder Mode (Organized by Themes)
-Group projects or prompt collections into individual thematic subfolders:
-```text
-~/Desktop/microstock_generator/
-├── watercolor_animals/
-│   ├── raw/                            # Input images (auto-organized on launch)
-│   ├── rejected_similar/               # Filtered duplicate frames (pHash)
-│   ├── rejected_qa/                    # Any file failing technical specs
-│   └── result/                         # 🏁 Finished assets for this batch
+├── Run_Step1_Research.command          # Auto-generated 1-click Step 1 shortcut
+├── Run_Microstock_Generator.command    # Auto-generated 1-click Step 4 shortcut
+├── Run_Step5_Upload.command            # Auto-generated 1-click Step 5 shortcut
+├── prompts/
+│   ├── prompts_YYYY-MM-DD_HHMMSS.txt   # Copy-paste ready prompts + Suggested File
+│   └── prompts_YYYY-MM-DD_HHMMSS.json  # Structured backup
 │
-└── architectural_interiors/
-    ├── raw/
-    └── result/
+└── cosmetic_stone_podium/              # Batch folder (named after your theme)
+    ├── raw/                            # Drop your generated raw images here
+    ├── rejected_similar/               # Filtered pHash duplicates
+    ├── rejected_ai_qa/                 # Rejected by Free-Tier Vision QC
+    ├── rejected_qa/                    # Failed technical validation
+    └── result/                         # 🏁 Ready for Adobe Stock!
+        ├── travertine_podium_01.jpg    # Production-ready sRGB JPEG / PNG
+        ├── adobe_stock_metadata.csv    # Ready for Adobe Stock "Upload CSV"
+        └── manifest.json               # SHA-256 & SFTP upload state tracker
+```
+
+All run reports are saved automatically to `<project>/logs/run_<mode>_YYYY-MM-DD_HHMMSS.txt`.
+
+---
+
+## CLI Reference & Scheduled Automation
+
+```bash
+# Inspect environment, free-tier APIs, Upscayl, ExifTool, and SFTP status
+./run.sh --dry-run
+
+# Step 1: Run High-Demand Research (custom count and optional niche focus)
+./run.sh --research --count 12
+./run.sh --research --count 12 --niche "Ramadan luxury"
+
+# Step 4: Process batches (default mode)
+./run.sh
+./run.sh --input /path/to/batches --output /path/to/output
+./run.sh --skip-upscale          # Bypass 4x Upscayl
+./run.sh --skip-ai-qa            # Force 100% offline metadata/QC
+./run.sh --no-remove-bg          # Keep original backgrounds (all scenes)
+./run.sh --type isolated         # Force transparent PNG output
+
+# Step 5: Adobe Stock SFTP Upload
+./run.sh --upload --dry-run      # Preview pending files without uploading
+./run.sh --upload                # Upload pending files to SFTP
+```
+
+### Optional Daily Schedule (macOS `launchd`)
+Automatically run Step 4 (Process) → Step 5 (SFTP Upload) every night at **02:00 AM**:
+```bash
+./scripts/install_daily_schedule.sh          # Install & enable daily 02:00 job
+./scripts/install_daily_schedule.sh --remove # Uninstall scheduled job
 ```
 
 ---
 
-## Power User & Command-Line Usage
+## Configuration (`config.yaml`)
 
-Use `python main.py` directly for headless servers, scripts, or external storage:
-
-### 1. Verification (Dry Run)
-Inspect system detection, binary paths, and config without modifying files:
-```bash
-python main.py --dry-run
-```
-
-### 2. Custom Input and Output Folders
-Process files from external drives or custom directories:
-```bash
-python main.py --input /Volumes/ExtremeSSD/RawPhotos --output /Volumes/ExtremeSSD/ApprovedStock
-# Short aliases:
-python main.py -i ./my_photos -o ./my_results
-```
-
-### 3. Background Removal Control
-```bash
-# Keep original backgrounds for all images (treat all assets as scenes):
-python main.py --no-remove-bg
-
-# Save an extra copy of transparent cutouts to a dedicated directory:
-python main.py --bg-output ~/Desktop/Transparent_Cutouts
-```
-
-### 4. Bypass AI Upscaling
-Process images at original resolution (applies background removal, anti-halo cleaning, and QA validation):
-```bash
-python main.py --skip-upscale
-```
-
-### 5. Force Output Asset Type
-```bash
-python main.py --type isolated    # Force transparent PNG output
-python main.py --type scene       # Force sRGB JPEG output
-```
-
-### CLI Flag Reference
-
-| Option | Shorthand | Default | Purpose |
-|---|---|---|---|
-| `--input` | `-i`, `--source`, `-s` | `~/Desktop/microstock_generator` | Source directory with images or batch folders. |
-| `--output` | `-o`, `--result`, `-r` | `<batch>/result/` | Target folder for validated outputs. |
-| `--remove-bg` | | `Enabled` | Enable AI studio cutout on isolated objects. |
-| `--no-remove-bg` | `--skip-bg-remove` | | Disable background removal; preserve backgrounds. |
-| `--bg-output` | `--bg-output-dir` | `None` | Save duplicate transparent PNG cutouts here. |
-| `--skip-upscale` | `--no-upscale` | `false` | Skip 4x AI upscaling step. |
-| `--type` | `-t` | `auto` | Asset type: `auto`, `isolated` (PNG), or `scene` (JPEG). |
-| `--dry-run` | | | Inspect paths, models, and binaries without running. |
-
----
-
-## Configuration (config.yaml)
-
-Fine-tune pipeline parameters in `config.yaml`:
+Key settings in `config.yaml`:
 
 ```yaml
 paths:
-  base_dir: "~/Desktop/microstock_generator" # Default source folder
-  output_dir: null                          # null saves to <batch>/result/
-  upscayl_bin: null                         # Auto-detected if null
-  models_dir: null                          # Auto-detected if null
+  base_dir: "~/Desktop/microstock_generator"
+  output_dir: null
 
-upscaling:
-  scale: 4
-  skip_upscale: false
-  models:
-    isolated: "ultramix-balanced-4x"        # Crisp edges without plastic texture
-    scene: "high-fidelity-4x"               # Rich photorealistic detail
+metadata:
+  gemini_text_model: "gemini-2.5-flash"
+  max_title_chars: 70
+  min_keywords: 25
+  max_keywords: 50
+  strip_forbidden_words: true
+  embed_iptc_metadata: true
+  export_csv: true
 
-segmentation:
-  remove_bg: true                           # Set false to disable cutout globally
-  bg_output_dir: null                       # Optional cutout export folder
-  bg_model: "birefnet-general-lite"         # Fast SOTA segmentation model
-  alpha_low_cut: 40                         # Eliminates faint floor shadows
-  alpha_high_snap: 200                      # Locks subject core to 100% opacity
-  color_decontaminate: true                 # Anti-halo un-premultiplication
-  tight_crop: true                          # Crops empty transparent margins
-  tight_crop_margin_pct: 0.03               # 3% breathing margin around subject
-  auto_reupscale_if_under_4mp: true         # Guards against sub-4MP tight crops
+free_tier:
+  groq_model: "llama-3.3-70b-versatile"
+  mistral_model: "mistral-small-latest"
+  openrouter_text_model: "meta-llama/llama-3.3-70b-instruct:free"
+  openrouter_vision_model: "google/gemma-3-27b-it:free"
+  min_delay_sec: 4.5
+  enable_ai_qa: true
+  enable_vision_metadata: true
 
-validation:
-  min_megapixels: 4.0                       # Adobe Stock strict minimum
-  max_megapixels: 100.0                     # Adobe Stock strict maximum
-  max_file_size_mb: 45.0                    # Agency file upload cap
-  max_filename_chars: 30                    # Filename limit for contributor CSVs
-  srgb_enforcement: true                    # Embeds sRGB IEC61966-2.1 ICC profile
-  jpeg_quality: 95                          # High quality 4:4:4 chroma JPEG
-  dedup_phash_threshold: 6                  # Duplicate rejection sensitivity
+research:
+  prompts_dir: null                  # null -> <base_dir>/prompts
+  default_prompt_count: 12
+
+logging:
+  logs_dir: "logs"
+
+upload:
+  sftp_host: "sftp.contributor.adobestock.com"
+  sftp_port: 22
+  max_retries: 3
 ```
 
 ---
@@ -234,66 +198,46 @@ validation:
 
 | Agency | Core Technical Specifications | Pipeline Solution |
 |---|---|---|
-| **Adobe Stock** | 4 – 100 MP, $< 45$ MB, sRGB profile, zero edge halos. | Anti-halo un-premultiplication removes white fringes. Technical QA enforces resolution, file size, and filename constraints. |
-| **Shutterstock** | Minimum 4 MP, no blur/fringing, 8-bit RGB/sRGB. | Upscayl 4x AI models ensure 4K+ sharpness with zero plastic artifacting. |
-| **Freepik** | High aesthetic fidelity, clean cutouts, strict anti-spam. | pHash filtering rejects near-identical compositions; BiRefNet purges floating stray pixels. |
-| **iStock / Getty** | Strict sRGB IEC61966-2.1 color profile, tight framing. | Automatic sRGB ICC embedding and 3% tight subject cropping. |
+| **Adobe Stock** | 4 – 100 MP, ≤ 45 MB, sRGB, filename ≤ 30 chars, Title ≤ 70 chars (no commas), ≤ 50 ranked keywords. | Vision QC + 3-tier SEO metadata, anti-halo cutouts, strict validator, `adobe_stock_metadata.csv`, ExifTool IPTC. |
+| **Shutterstock** | ≥ 4 MP, no blur/fringing, 8-bit RGB/sRGB. | Upscayl 4x AI models + Laplacian sharpness & exposure clipping checks. |
+| **Freepik** | High aesthetic fidelity, clean cutouts, anti-spam. | pHash deduplication + BiRefNet stray-pixel cleanup. |
+| **iStock / Getty** | Strict sRGB IEC61966-2.1 color profile, tight framing. | Automatic sRGB ICC embedding + 3% tight subject cropping. |
 
-### 💡 Contributor Best Practices:
-1. **Generative AI Disclosure:** On contributor portals, always check **"Created using generative AI tools"** for synthetic content.
-2. **Releases:** Check **"People and Property are fictional"** when generating fictional human portraits or recognizable buildings.
-3. **100% Zoom Check:** Always inspect a couple of sample outputs at 100% actual pixels before final submission.
-4. **Metadata Cleanliness:** Avoid trademarked brand names (e.g., *iPhone*, *Sony*, *Lego*) or AI buzzwords (*"photorealistic"*, *"midjourney"*).
+### 💡 Submitting to Adobe Stock (30-Second Hybrid Finalization)
+1. Drag & drop all images from `result/` into the Adobe Stock Contributor upload portal (or push via SFTP if enabled on your account).
+2. Click **Upload CSV** and select `result/adobe_stock_metadata.csv` to auto-fill Titles, Keywords, and Categories.
+3. Click **Select All** → check **"Created using generative AI tools"** (mandatory for AI assets) → **Submit for Review**.
+
+---
+
+## Security & Secret Protection
+
+- `.env`, `.env.*` (except empty `.env.example`), `logs/`, and `output/` are strictly gitignored in `.gitignore`.
+- Gemini REST fallback sends keys via the `x-goog-api-key` HTTP header (never in URL query strings).
+- `RunLogger` automatically redacts configured API keys, SFTP credentials, `Bearer` tokens, and `?key=` strings as `[REDACTED]` before writing to stdout or `logs/*.txt`.
+- System `curl` SFTP fallback uses a temporary `0600` `.netrc` file deleted immediately after transfer (credentials never appear in process arguments).
 
 ---
 
 ## Troubleshooting & FAQ
 
 <details>
-<summary><b>1. macOS: "Run_Microstock_Generator.command cannot be opened because it is from an unidentified developer"</b></summary>
+<summary><b>1. macOS Gatekeeper blocks double-clicking .command files</b></summary>
 <br>
-macOS Gatekeeper blocks executable scripts downloaded from the web:
-1. Open <b>System Settings > Privacy & Security</b>.
-2. Scroll to the Security section and click <b>"Open Anyway"</b>.
-3. Or grant executable rights via Terminal:
-   ```bash
-   chmod +x Run_Microstock_Generator.command run.sh
-   ```
+Right-click the <code>.command</code> file → <b>Open</b> on first run, or run:
+<pre>chmod +x Run_Step1_Research.command Run_Microstock_Generator.command Run_Step5_Upload.command run.sh</pre>
 </details>
 
 <details>
-<summary><b>2. Windows: "'python' is not recognized as an internal or external command"</b></summary>
+<summary><b>2. Why is SFTP not visible in my Adobe Stock Contributor portal?</b></summary>
 <br>
-Python was installed without adding the executable to the system PATH:
-1. Re-run the Python Windows installer.
-2. Select <b>Modify</b>.
-3. Check the box: <b>☑️ Add Python to PATH</b> and finish installation.
+Adobe Stock only unlocks SFTP for qualified accounts with established approval history. Use standard browser Drag & Drop + the <b>Upload CSV</b> button (with <code>result/adobe_stock_metadata.csv</code>) until SFTP unlocks on your account.
 </details>
 
 <details>
-<summary><b>3. Upscayl binary is marked as MISSING in dry run</b></summary>
+<summary><b>3. How do I re-process a batch that already has a result/ folder?</b></summary>
 <br>
-If Upscayl is installed in a non-standard directory:
-1. Open `config.yaml`.
-2. Specify the explicit path to your executable:
-   - <b>macOS:</b> `/Applications/Upscayl.app/Contents/Resources/bin/upscayl-bin`
-   - <b>Windows:</b> `C:\Program Files\Upscayl\resources\bin\upscayl-bin.exe`
-   - <b>Linux:</b> `/usr/bin/upscayl-bin`
-*(Or run with `--skip-upscale` if you don't require super-resolution).*
-</details>
-
-<details>
-<summary><b>4. How do I re-process a batch that has already completed?</b></summary>
-<br>
-To prevent accidental file overwrites, folders containing an existing populated `result/` directory are skipped. To re-process:
-- Delete or rename the existing `result/` folder inside that batch.
-- Run the launcher again.
-</details>
-
-<details>
-<summary><b>5. Virtual environment issues after moving or renaming the folder</b></summary>
-<br>
-Both `run.sh` and `run.bat` feature <b>automatic self-healing</b>. If a relocated directory breaks existing python interpreter paths, the script detects the issue and recreates `.venv` automatically. To trigger a manual reset at any time, simply delete the `.venv` directory.
+Delete or rename the existing <code>result/</code> folder inside that batch and re-run <code>Run_Microstock_Generator.command</code>.
 </details>
 
 ---
