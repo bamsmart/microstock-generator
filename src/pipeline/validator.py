@@ -9,7 +9,7 @@ Enforces all rules required for commercial stock asset approval:
 """
 
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Dict, Any
 import numpy as np
 from PIL import Image
 import cv2

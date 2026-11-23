@@ -10,7 +10,6 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .categories import ADOBE_STOCK_CATEGORIES
 from .config import PipelineConfig
 from .local_metadata import LocalMetadataEngine
 

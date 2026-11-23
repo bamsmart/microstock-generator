@@ -4,7 +4,7 @@ Prevents "Similar Content" rejections by Adobe Stock reviewers.
 """
 
 from pathlib import Path
-from typing import List, Tuple, Set
+from typing import List, Tuple
 from PIL import Image, ImageOps
 
 try:

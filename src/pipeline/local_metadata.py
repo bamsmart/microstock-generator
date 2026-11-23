@@ -5,7 +5,7 @@ without calling any external API. Fast, deterministic, and 100% offline.
 """
 
 import re
-from typing import List, Dict, Tuple, Set
+from typing import List, Tuple
 from .categories import normalize_category_id, ADOBE_STOCK_CATEGORIES
 from .compliance import lint_title, lint_keywords, FORBIDDEN_KEYWORDS
 

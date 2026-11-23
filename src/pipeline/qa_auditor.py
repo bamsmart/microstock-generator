@@ -21,7 +21,7 @@ Generates Adobe-compliant metadata:
 
 import io
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from PIL import Image, ImageOps
 
 from .categories import ADOBE_STOCK_CATEGORIES, normalize_category_id

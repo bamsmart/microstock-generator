@@ -4,8 +4,7 @@ Strictly checks and sanitizes titles, keywords, and filenames according to micro
 """
 
 import re
-from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple
 
 # Prohibited keywords, artist names, brands, and spam phrases
 FORBIDDEN_KEYWORDS = {

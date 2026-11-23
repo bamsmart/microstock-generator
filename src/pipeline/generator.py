@@ -5,9 +5,8 @@ Includes prompt compliance guardrails and formatting for stock asset generation.
 
 import os
 import io
-import time
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import List, Tuple
 from PIL import Image
 
 from .config import PipelineConfig

@@ -8,12 +8,11 @@ import numpy as np
 from PIL import Image
 
 from src.pipeline.config import load_config
-from src.pipeline.categories import normalize_category_id, ADOBE_STOCK_CATEGORIES
+from src.pipeline.categories import normalize_category_id
 from src.pipeline.compliance import sanitize_filename, lint_title, lint_keywords
-from src.pipeline.dedup import compute_phash, hamming_distance, filter_near_duplicates
+from src.pipeline.dedup import filter_near_duplicates
 from src.pipeline.postprocess import (
     clean_stray_pixels,
-    refine_alpha_boundary,
     tight_crop_rgba,
     normalize_alpha_confidence,
     guided_filter_alpha,

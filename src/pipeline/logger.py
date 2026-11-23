@@ -8,7 +8,6 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 _SECRET_ENV_VARS = (
     "GEMINI_API_KEY",
