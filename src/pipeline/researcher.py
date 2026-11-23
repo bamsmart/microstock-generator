@@ -18,8 +18,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .compliance import FORBIDDEN_KEYWORDS, sanitize_filename
-from .llm_router import FreeTierLLMRouter
+from .compliance import FORBIDDEN_KEYWORDS, lint_commercial_prompt, sanitize_filename
+from .llm_router import FreeTierLLMRouter, build_ssl_context
 
 # Monthly buyer-demand calendar (indexed by TARGET month, i.e., 2-3 months ahead of today)
 SEASONAL_DEMAND_CALENDAR: Dict[int, List[Dict[str, str]]] = {
@@ -239,16 +239,9 @@ COMMERCIAL_BLUEPRINTS: List[Dict[str, str]] = [
 ]
 
 
-def _clean_prompt_forbidden(prompt: str) -> str:
-    """Strip any accidental forbidden brands/buzzwords from a generated prompt."""
-    import re
-
-    cleaned = prompt.strip()
-    lower = cleaned.lower()
-    for word in FORBIDDEN_KEYWORDS:
-        if word in lower:
-            cleaned = re.sub(rf"\b{re.escape(word)}\b", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s{2,}", " ", cleaned).replace(" ,", ",").strip(" ,")
+def _clean_prompt_forbidden(prompt: str, asset_type: str = "scene") -> str:
+    """Enforce Adobe Stock commercial-grade prompt compliance (strip banned IP/buzzwords + ensure guardrails)."""
+    cleaned, _ = lint_commercial_prompt(prompt, asset_type=asset_type)
     return cleaned
 
 
@@ -279,7 +272,7 @@ def fetch_google_trends_rss(geo: str = "US", max_items: int = 12, timeout: int =
     url = f"https://trends.google.com/trending/rss?geo={geo}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "MicrostockGenerator/2.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=build_ssl_context()) as resp:
             xml_data = resp.read()
         root = ET.fromstring(xml_data)
         titles: List[str] = []
@@ -340,17 +333,24 @@ class HighDemandResearcher:
                 f"({', '.join(self.llm.available_text_providers())})..."
             )
             system_prompt = (
-                "You are a Senior Adobe Stock Creative Director & Microstock Market Strategist. "
-                "Generate high-demand, commercial-grade AI image generation prompts that sell well to "
-                "advertising agencies, SaaS startups, print-on-demand designers, and corporate marketers.\n"
-                "STRICT RULES:\n"
-                "1. ZERO brand names, trademarks, copyrighted characters, logos, or living/deceased artist names.\n"
-                "2. ZERO text/letters inside images (always specify 'no text, no logos, no watermarks').\n"
-                "3. For 'scene' prompts: specify natural editorial lighting, lens/angle, authentic textures, "
-                "and generous clean negative copy space for designer typography. Aspect ratio: 3:2.\n"
-                "4. For 'isolated' prompts: specify 'isolated on a pure solid white background (#FFFFFF)', "
-                "centered subject filling 80% of frame, crisp clean edges, even lighting, no drop shadows. Aspect ratio: 1:1.\n"
-                "5. Do NOT use spammy AI buzzwords like '8k', 'photorealistic', 'hyperrealistic', 'unreal engine', 'trending'.\n"
+                "You are a Top-1% Adobe Stock Creative Director & Commercial Microstock Compliance Specialist. "
+                "Generate high-demand, commercial-grade AI image generation prompts engineered to pass Adobe Stock's "
+                "strict Technical, Legal/IP, and Commercial Utility moderation on the first try.\n"
+                "MANDATORY ADOBE STOCK RULES:\n"
+                "1. ZERO IP/LEGAL RISK: Never mention brands, trademarks, logos, copyrighted characters, "
+                "recognizable landmarks/modern architecture, newsworthy events, or living/deceased artists (never 'in the style of ...').\n"
+                "2. ZERO ANATOMY / RELEASE RISK: Avoid recognizable human faces, celebrities, or complex hand/crowd scenes. "
+                "Focus on high-selling commercial subjects: objects, workspaces, interiors, flatlays, food/drinks, botanicals, "
+                "product podiums, textures, and minimalist 3D icons.\n"
+                "3. ZERO TEXT / WATERMARKS: Always specify 'no text, no logos, no watermarks'.\n"
+                "4. ZERO AI PLASTIC BUZZWORDS: Never use '8k', '4k', 'photorealistic', 'hyperrealistic', 'unreal engine', "
+                "'octane render', 'masterpiece', 'award winning', or 'trending' — describe real camera optics, natural daylight, "
+                "and authentic surface micro-textures instead.\n"
+                "5. FOR 'scene' PROMPTS (3:2): Specify natural editorial lighting, lens/angle, authentic textures, clear commercial "
+                "buyer utility, and generous clean negative copy space (left/right/top third) for designer headlines.\n"
+                "6. FOR 'isolated' PROMPTS (1:1): Specify 'isolated on a pure solid white background (#FFFFFF)', "
+                "centered full uncropped silhouette filling 75-80% of frame with clean breathing margin on all 4 sides, "
+                "crisp clean outer edges, even softbox lighting, no drop shadows, no floating debris.\n"
                 "Respond ONLY in valid JSON with key 'prompts' containing a list of objects:\n"
                 '{"prompts": [{"asset_type": "scene"|"isolated", "aspect_ratio": "3:2"|"1:1", '
                 '"theme": "...", "buyer": "...", "folder_slug": "short_snake_case", '
@@ -391,7 +391,7 @@ class HighDemandResearcher:
                         "buyer": str(item.get("buyer", "Commercial marketing & design")).strip(),
                         "folder_slug": folder_slug,
                         "suggested_filename": suggested_filename,
-                        "prompt": _clean_prompt_forbidden(str(item["prompt"])),
+                        "prompt": _clean_prompt_forbidden(str(item["prompt"]), asset_type=a_type),
                     })
                 log_callback(f"   ✅ Generated {len(prompts)} prompts via Free-Tier provider: {provider_used}")
 
@@ -414,6 +414,7 @@ class HighDemandResearcher:
                 entry = dict(item)
                 ext = ".png" if entry["asset_type"] == "isolated" else ".jpg"
                 entry["suggested_filename"] = sanitize_filename(f"{entry['folder_slug']}_{idx:02d}", ext=ext, max_len=30)
+                entry["prompt"] = _clean_prompt_forbidden(entry["prompt"], asset_type=entry["asset_type"])
                 prompts.append(entry)
 
         # Export copy-paste friendly .txt and structured .json

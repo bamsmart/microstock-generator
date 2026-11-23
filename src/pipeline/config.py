@@ -93,7 +93,7 @@ class PipelineConfig:
     dedup_phash_threshold: int = 6
 
     # Metadata & Compliance
-    gemini_text_model: str = "gemini-2.5-flash"
+    gemini_text_model: str = "gemini-3.8-flash"
     groq_model: str = "llama-3.3-70b-versatile"
     mistral_model: str = "mistral-small-latest"
     openrouter_text_model: str = "meta-llama/llama-3.3-70b-instruct:free"

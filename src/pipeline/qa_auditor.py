@@ -65,7 +65,7 @@ class VisionQAAuditor:
         """
         # Combine folder context + individual filename stem so offline fallback is specific per image
         folder_hint = prompt_hint or image_path.parent.name.replace("_result", "").replace("_upscaled", "")
-        if folder_hint in ("raw", "result", "upscaled", ""):
+        if folder_hint.lower() in ("raw", "result", "upscaled", "input", "microstock_generator", "microstock-generator", ""):
             folder_hint = ""
         file_hint = image_path.stem.replace("_", " ").replace("-", " ")
         theme_hint = f"{folder_hint} {file_hint}".strip() if folder_hint and folder_hint.lower() not in file_hint.lower() else (file_hint or folder_hint or "commercial stock")

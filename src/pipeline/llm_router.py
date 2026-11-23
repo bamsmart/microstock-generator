@@ -17,12 +17,22 @@ import base64
 import json
 import os
 import re
+import ssl
 import time
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 from .logger import redact_secrets
+
+
+def build_ssl_context() -> ssl.SSLContext:
+    """Create an SSLContext using certifi CA bundle (fixes macOS python.org SSL_VERIFY_FAILED)."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
 
 
 def _extract_json_block(text: str) -> str:
@@ -51,7 +61,7 @@ class FreeTierLLMRouter:
 
     def __init__(
         self,
-        gemini_model: str = "gemini-2.5-flash",
+        gemini_model: str = "gemini-3.8-flash",
         groq_model: str = "llama-3.3-70b-versatile",
         mistral_model: str = "mistral-small-latest",
         openrouter_text_model: str = "meta-llama/llama-3.3-70b-instruct:free",
@@ -73,6 +83,7 @@ class FreeTierLLMRouter:
         self.min_delay_sec = max(0.0, float(min_delay_sec))
         self.timeout_sec = timeout_sec
         self._last_call_ts: float = 0.0
+        self._ssl_ctx = build_ssl_context()
 
     def available_text_providers(self) -> List[str]:
         providers: List[str] = []
@@ -112,7 +123,7 @@ class FreeTierLLMRouter:
     ) -> Dict[str, Any]:
         body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout_sec) as resp:
+        with urllib.request.urlopen(req, timeout=self.timeout_sec, context=self._ssl_ctx) as resp:
             raw = resp.read().decode("utf-8")
             return json.loads(raw)
 

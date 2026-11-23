@@ -59,7 +59,7 @@ validation:
   dedup_phash_threshold: 6
 
 metadata:
-  gemini_text_model: "gemini-2.5-flash"
+  gemini_text_model: "gemini-3.8-flash"
   max_title_chars: 70
   min_keywords: 25
   max_keywords: 50

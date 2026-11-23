@@ -486,5 +486,37 @@ def test_sftp_uploader_discovery_and_antidup():
         assert pending_after[0][0].name == "asset_02.png"
 
 
+def test_commercial_prompt_linter_adobe_rules():
+    from src.pipeline.compliance import lint_commercial_prompt
+
+    dirty_scene = (
+        "Luxury cafe in front of Eiffel Tower in the style of Van Gogh, "
+        "iPhone on table, masterpiece, award winning, 8k resolution, photorealistic"
+    )
+    clean_scene, warnings = lint_commercial_prompt(dirty_scene, asset_type="scene")
+    low = clean_scene.lower()
+    assert "eiffel tower" not in low
+    assert "van gogh" not in low
+    assert "in the style of" not in low
+    assert "iphone" not in low
+    assert "masterpiece" not in low
+    assert "photorealistic" not in low
+    assert "copy space" in low
+    assert "no text" in low
+    assert "no logos" in low
+    assert "no watermarks" in low
+    assert len(warnings) >= 4
+
+    dirty_iso = "Ceramic coffee cup with Nike logo, octane render"
+    clean_iso, _ = lint_commercial_prompt(dirty_iso, asset_type="isolated")
+    low_iso = clean_iso.lower()
+    assert "nike" not in low_iso
+    assert "octane render" not in low_iso
+    assert "white background" in low_iso
+    assert "no drop shadow" in low_iso
+    assert "no text" in low_iso
+
+
+
 
 

@@ -29,8 +29,8 @@ A **$0 / Free-Tier Hybrid Microstock Automation Pipeline** that covers **high-de
 
 ## Core Capabilities
 
-- 📈 **Step 1 — High-Demand Seasonal Research (`--research`):** Targets the **H-60 to H-90 buyer window** (what commercial buyers search 2–3 months ahead), pulls live Google Trends RSS signals, and synthesizes copyright-safe, copy-paste commercial prompts (with `Suggested File` ≤ 30 chars) into `~/Desktop/microstock_generator/prompts/`.
-- 🧠 **Free-Tier Cloud AI Router ($0, Zero Credit Card):** Automatically routes text & vision tasks across free-tier providers with built-in RPM throttling and fallback (**Groq → Gemini Flash → Mistral → OpenRouter `:free`**), plus deterministic offline fallbacks when no API key is configured.
+- 📈 **Step 1 — High-Demand Seasonal Research (`--research`):** Targets the **H-60 to H-90 buyer window** (what commercial buyers search 2–3 months ahead), pulls live Google Trends RSS signals, synthesizes copyright-safe commercial prompts with automatic Adobe Stock prompt linting (`lint_commercial_prompt` strips brands, artists, `"in the style of ..."`, protected landmarks, and AI buzzword spam while enforcing copy space / `#FFFFFF` uncropped silhouette guardrails), and exports `Suggested File` (≤ 30 chars) into `~/Desktop/microstock_generator/prompts/`.
+- 🧠 **Free-Tier Cloud AI Router ($0, Zero Credit Card):** Automatically routes text & vision tasks across free-tier providers with built-in RPM throttling, `certifi` SSL support (fixes macOS Python SSL errors), and automatic fallback (**Groq → Gemini `gemini-3.8-flash` → Mistral → OpenRouter `:free`**), plus deterministic offline fallbacks when no API key is configured.
 - 🔍 **Single-Call Vision QC + Page-1 Adobe Stock SEO:** Audits raw AI images **before** upscaling (rejecting bad hands, garbled text, artifacts into `rejected_ai_qa/`) while simultaneously generating ultra-specific Titles (≤ 70 chars, no commas), 3-tier ranked Keywords (35–45, blocking generic filler spam), Category IDs (1–21), and SEO Filenames (≤ 30 chars).
 - ✂️ **True Anti-Halo Cutouts:** Combines BiRefNet-Lite segmentation, edge-aware Guided Filtering, Color-Projection Matting, and mathematical white-matte un-premultiplication to eliminate white halos on isolated PNGs.
 - ⚡ **AI Super-Resolution:** Integrates with local Upscayl 4x models (`ultramix-balanced-4x` for isolated, `high-fidelity-4x` for scenes) to guarantee 4 MP – 100 MP microstock standards.
@@ -143,12 +143,19 @@ All run reports are saved automatically to `<project>/logs/run_<mode>_YYYY-MM-DD
 ./run.sh --upload                # Upload pending files to SFTP
 ```
 
-### Optional Daily Schedule (macOS `launchd`)
-Automatically run Step 4 (Process) → Step 5 (SFTP Upload) every night at **02:00 AM**:
-```bash
-./scripts/install_daily_schedule.sh          # Install & enable daily 02:00 job
-./scripts/install_daily_schedule.sh --remove # Uninstall scheduled job
-```
+### Optional Daily Schedules (macOS `launchd` — Zero Background Daemon)
+Both schedules use native macOS `launchd` (`RunAtLoad = false`, no `KeepAlive`), so **no background process stays running** (0% CPU / 0 MB RAM when idle — Python exits immediately after each run):
+
+1. **Daily Step 1 Research at 20:00 WIB** *(runs ONLY if Mac is awake/on during the 20:00 hour)*:
+   ```bash
+   ./scripts/install_research_schedule.sh          # Install & enable daily 20:00 WIB research
+   ./scripts/install_research_schedule.sh --remove # Uninstall & stop completely when not needed
+   ```
+2. **Daily Step 4 (Process) → Step 5 (SFTP Upload) at 02:00 AM**:
+   ```bash
+   ./scripts/install_daily_schedule.sh             # Install & enable daily 02:00 job
+   ./scripts/install_daily_schedule.sh --remove    # Uninstall scheduled job
+   ```
 
 ---
 
@@ -162,7 +169,7 @@ paths:
   output_dir: null
 
 metadata:
-  gemini_text_model: "gemini-2.5-flash"
+  gemini_text_model: "gemini-3.8-flash"
   max_title_chars: 70
   min_keywords: 25
   max_keywords: 50
@@ -216,6 +223,7 @@ upload:
 - Gemini REST fallback sends keys via the `x-goog-api-key` HTTP header (never in URL query strings).
 - `RunLogger` automatically redacts configured API keys, SFTP credentials, `Bearer` tokens, and `?key=` strings as `[REDACTED]` before writing to stdout or `logs/*.txt`.
 - System `curl` SFTP fallback uses a temporary `0600` `.netrc` file deleted immediately after transfer (credentials never appear in process arguments).
+- Built-in workspace skill [SKILL.md](.agent/skills/microstock-adobe-stock/SKILL.md) encodes Adobe Stock Generative AI legal/IP rules, prompt formulas, and 3-tier SEO metadata standards.
 
 ---
 
