@@ -65,4 +65,26 @@ metadata:
   min_keywords: 25
   max_keywords: 50                   # Adobe Stock max keywords
   strip_forbidden_words: true        # Enforce no "AI", brand names, artist names
-  export_csv: false                  # Output image files only (no CSV/JSON)
+  embed_iptc_metadata: true          # Embed IPTC/XMP via ExifTool if installed
+  export_csv: true                   # Export adobe_stock_metadata.csv in result/
+
+free_tier:
+  groq_model: "llama-3.3-70b-versatile"
+  mistral_model: "mistral-small-latest"
+  openrouter_text_model: "meta-llama/llama-3.3-70b-instruct:free"
+  openrouter_vision_model: "google/gemma-3-27b-it:free"
+  min_delay_sec: 4.5                 # Gentle RPM spacing for free-tier APIs
+  enable_ai_qa: true                 # Reject defective AI images before upscaling
+  enable_vision_metadata: true       # Single-call Vision QC + SEO Metadata
+
+research:
+  prompts_dir: null                  # null saves to <base_dir>/prompts (default: ~/Desktop/microstock_generator/prompts)
+  default_prompt_count: 12           # 6 full-scene + 6 isolated prompts per run
+
+logging:
+  logs_dir: "logs"                   # Plain-text (.txt) run logs (no Telegram)
+
+upload:
+  sftp_host: "sftp.contributor.adobestock.com"
+  sftp_port: 22
+  max_retries: 3

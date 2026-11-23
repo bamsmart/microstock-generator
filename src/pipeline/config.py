@@ -94,11 +94,29 @@ class PipelineConfig:
 
     # Metadata & Compliance
     gemini_text_model: str = "gemini-2.5-flash"
+    groq_model: str = "llama-3.3-70b-versatile"
+    mistral_model: str = "mistral-small-latest"
+    openrouter_text_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    openrouter_vision_model: str = "google/gemma-3-27b-it:free"
+    free_tier_delay_sec: float = 4.5
+    enable_ai_qa: bool = True
+    enable_vision_metadata: bool = True
+    embed_iptc_metadata: bool = True
     max_title_chars: int = 70
     min_keywords: int = 25
     max_keywords: int = 50
     strip_forbidden_words: bool = True
     export_csv: bool = True
+
+    # Research & Logging (Hybrid Workflow)
+    prompts_dir: Optional[Path] = None   # None -> <base_dir>/prompts (default: ~/Desktop/microstock_generator/prompts)
+    logs_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "logs")
+    default_prompt_count: int = 12
+
+    # Step 5: Adobe Stock SFTP Upload
+    sftp_host: str = "sftp.contributor.adobestock.com"
+    sftp_port: int = 22
+    sftp_max_retries: int = 3
 
     # Raw config dictionary
     raw: Dict[str, Any] = field(default_factory=dict)
@@ -190,13 +208,37 @@ def load_config(config_path: Path = None) -> PipelineConfig:
     cfg.jpeg_quality = int(val.get("jpeg_quality", cfg.jpeg_quality))
     cfg.dedup_phash_threshold = int(val.get("dedup_phash_threshold", cfg.dedup_phash_threshold))
 
-    # Metadata
+    # Metadata & Free-Tier Cloud AI
     meta = data.get("metadata", {})
     cfg.gemini_text_model = meta.get("gemini_text_model", cfg.gemini_text_model)
     cfg.max_title_chars = int(meta.get("max_title_chars", cfg.max_title_chars))
     cfg.min_keywords = int(meta.get("min_keywords", cfg.min_keywords))
     cfg.max_keywords = int(meta.get("max_keywords", cfg.max_keywords))
     cfg.strip_forbidden_words = meta.get("strip_forbidden_words", cfg.strip_forbidden_words)
-    cfg.export_csv = meta.get("export_csv", cfg.export_csv)
+    cfg.export_csv = bool(meta.get("export_csv", cfg.export_csv))
+    cfg.embed_iptc_metadata = bool(meta.get("embed_iptc_metadata", cfg.embed_iptc_metadata))
+
+    ft = data.get("free_tier", {})
+    cfg.groq_model = ft.get("groq_model", cfg.groq_model)
+    cfg.mistral_model = ft.get("mistral_model", cfg.mistral_model)
+    cfg.openrouter_text_model = ft.get("openrouter_text_model", cfg.openrouter_text_model)
+    cfg.openrouter_vision_model = ft.get("openrouter_vision_model", cfg.openrouter_vision_model)
+    cfg.free_tier_delay_sec = float(ft.get("min_delay_sec", cfg.free_tier_delay_sec))
+    cfg.enable_ai_qa = bool(ft.get("enable_ai_qa", cfg.enable_ai_qa))
+    cfg.enable_vision_metadata = bool(ft.get("enable_vision_metadata", cfg.enable_vision_metadata))
+
+    res_cfg = data.get("research", {})
+    if "prompts_dir" in res_cfg and res_cfg["prompts_dir"]:
+        cfg.prompts_dir = _resolve_path(res_cfg["prompts_dir"])
+    cfg.default_prompt_count = int(res_cfg.get("default_prompt_count", cfg.default_prompt_count))
+
+    log_cfg = data.get("logging", {})
+    if "logs_dir" in log_cfg and log_cfg["logs_dir"]:
+        cfg.logs_dir = _resolve_path(log_cfg["logs_dir"])
+
+    sftp_cfg = data.get("upload", {})
+    cfg.sftp_host = sftp_cfg.get("sftp_host", cfg.sftp_host)
+    cfg.sftp_port = int(sftp_cfg.get("sftp_port", cfg.sftp_port))
+    cfg.sftp_max_retries = int(sftp_cfg.get("max_retries", cfg.sftp_max_retries))
 
     return cfg

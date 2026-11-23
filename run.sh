@@ -59,4 +59,9 @@ fi
 export PYTHONUNBUFFERED=1
 export PYTHONIOENCODING=utf-8
 
-"$PYTHON_BIN" "$SCRIPT_DIR/main.py" "$@"
+# Prevent macOS sleep while processing batches
+if command -v caffeinate &>/dev/null; then
+    caffeinate -i "$PYTHON_BIN" "$SCRIPT_DIR/main.py" "$@"
+else
+    "$PYTHON_BIN" "$SCRIPT_DIR/main.py" "$@"
+fi

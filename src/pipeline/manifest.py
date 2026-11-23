@@ -48,6 +48,18 @@ class ManifestManager:
     def is_processed(self, file_hash: str) -> bool:
         return file_hash in self.data.get("records", {})
 
+    def is_uploaded(self, file_hash: str) -> bool:
+        rec = self.data.get("records", {}).get(file_hash)
+        return bool(rec and rec.get("uploaded_sftp") is True)
+
+    def mark_uploaded(self, file_hash: str, filename: str, remote_host: str = "sftp.contributor.adobestock.com"):
+        records = self.data.setdefault("records", {})
+        rec = records.setdefault(file_hash, {"output_name": filename})
+        rec["uploaded_sftp"] = True
+        rec["uploaded_at"] = datetime.now().isoformat()
+        rec["uploaded_host"] = remote_host
+        self.save()
+
     def record_asset(
         self,
         file_hash: str,

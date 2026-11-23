@@ -49,7 +49,15 @@ THEMATIC_EXPANSIONS = {
     "vintage": ["vintage", "retro", "classic", "antique", "nostalgia", "aged", "rustic", "old fashioned", "heritage", "traditional"],
     "modern": ["modern", "contemporary", "minimalist", "sleek", "stylish", "clean", "trendy", "elegant", "design"],
     "nature": ["nature", "outdoors", "natural", "organic", "scenic", "environment", "peaceful", "fresh", "earth"],
-    "food": ["food", "delicious", "tasty", "gourmet", "fresh", "cooking", "snack", "appetizing", "culinary", "ingredient"]
+    "food": ["food", "delicious", "tasty", "gourmet", "fresh", "cooking", "snack", "appetizing", "culinary", "ingredient"],
+    "podium": ["podium", "pedestal", "product display", "cosmetic backdrop", "stage", "plinth", "travertine", "minimalist", "studio", "mockup", "e-commerce", "skincare", "packaging", "beige", "shadow"],
+    "workspace": ["workspace", "desk", "home office", "remote work", "laptop", "productivity", "minimalist", "flatlay", "copy space", "interior", "business", "startup", "morning light", "oak"],
+    "ramadan": ["ramadan", "eid", "islamic", "lantern", "crescent", "festive", "arabesque", "geometric", "gold", "hospitality", "dates", "celebration", "greeting", "middle east", "muslim"],
+    "matcha": ["matcha", "green tea", "iced latte", "beverage", "cafe", "ceremonial", "oat milk", "drink", "refreshing", "glass", "ice cubes", "menu", "barista", "healthy"],
+    "fintech": ["fintech", "finance", "security", "shield", "banking", "digital payment", "cybersecurity", "isometric", "3d icon", "trust", "investment", "saas", "app", "corporate"],
+    "esg": ["sustainability", "esg", "renewable energy", "solar panel", "green energy", "wind turbine", "eco friendly", "climate", "clean tech", "environment", "carbon neutral", "future", "nature"],
+    "spa": ["spa", "wellness", "aromatherapy", "essential oil", "eucalyptus", "relaxation", "skincare", "organic", "botanical", "self care", "zen", "linen", "calm", "natural"],
+    "abstract": ["abstract", "glassmorphism", "translucent", "gradient", "wave", "ribbon", "futuristic", "technology", "corporate", "hero banner", "presentation", "minimalist", "clean", "backdrop"],
 }
 
 

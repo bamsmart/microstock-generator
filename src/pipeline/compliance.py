@@ -25,6 +25,14 @@ FORBIDDEN_KEYWORDS = {
     "greg rutkowski", "artgerm", "alphonse mucha", "beeple", "makoto shinkai"
 }
 
+# Weak/generic filler words that dilute Adobe Stock SEO ranking
+GENERIC_FILLER_KEYWORDS = {
+    "beautiful", "nice", "good", "cool", "amazing", "awesome", "pretty", "best",
+    "high quality", "high resolution", "image", "picture", "visual", "thing",
+    "stuff", "item", "object", "element", "creative", "artistic", "style",
+    "decorative", "concept", "design", "art", "layout", "backdrop"
+}
+
 
 def sanitize_filename(base_name: str, ext: str = ".png", max_len: int = 30) -> str:
     """

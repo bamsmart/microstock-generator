@@ -358,3 +358,133 @@ def test_filename_sanitization_and_length_compliance():
     assert "🎉" not in clean_name
     assert clean_name.isascii()
 
+
+def test_run_logger_txt_output():
+    from src.pipeline.logger import RunLogger
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        logger = RunLogger(Path(tmp_dir), run_name="test")
+        logger.log("Hello microstock")
+        logger.write_summary(["Passed: 5", "Failed: 0"])
+        log_path = logger.get_path()
+        assert log_path.exists()
+        assert log_path.suffix == ".txt"
+        content = log_path.read_text(encoding="utf-8")
+        assert "Hello microstock" in content
+        assert "Passed: 5" in content
+
+
+def test_high_demand_researcher_offline_prompt_pack():
+    from src.pipeline.llm_router import FreeTierLLMRouter
+    from src.pipeline.researcher import HighDemandResearcher, get_upcoming_seasonal_themes
+
+    window_label, themes = get_upcoming_seasonal_themes()
+    assert len(window_label) > 0
+    assert len(themes) >= 1
+
+    # Force offline router (no keys) to test deterministic commercial blueprint output
+    router = FreeTierLLMRouter(min_delay_sec=0)
+    router.groq_key = ""
+    router.gemini_key = ""
+    router.mistral_key = ""
+    router.openrouter_key = ""
+
+    researcher = HighDemandResearcher(llm_router=router)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        res = researcher.run_research(Path(tmp_dir), count=6, log_callback=lambda *_: None)
+        assert res["count"] == 6
+        assert res["txt_path"].exists()
+        assert res["json_path"].exists()
+        txt = res["txt_path"].read_text(encoding="utf-8")
+        assert "PROMPT (COPY BELOW):" in txt
+        assert "Suggested File:" in txt
+        assert "no text" in txt.lower()
+        for p in res["prompts"]:
+            assert len(p["suggested_filename"]) <= 30
+            assert p["suggested_filename"].endswith((".jpg", ".png"))
+
+
+def test_vision_qa_auditor_offline_fallback():
+    from src.pipeline.llm_router import FreeTierLLMRouter
+    from src.pipeline.qa_auditor import VisionQAAuditor
+
+    cfg = load_config()
+    router = FreeTierLLMRouter(min_delay_sec=0)
+    router.gemini_key = ""
+    router.openrouter_key = ""
+    auditor = VisionQAAuditor(cfg, llm_router=router)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        img_path = Path(tmp_dir) / "modern_office_desk.jpg"
+        Image.new("RGB", (600, 400), (200, 180, 160)).save(img_path)
+        res = auditor.audit_and_generate_metadata(img_path, asset_type="scene", prompt_hint="modern office desk")
+        assert res["passed"] is True
+        assert len(res["title"]) <= 70
+        assert len(res["keywords"]) >= 20
+        assert res["suggested_filename"].endswith(".jpg")
+        assert len(res["suggested_filename"]) <= 30
+
+
+def test_secret_redaction_in_logger():
+    import os
+    from src.pipeline.logger import RunLogger, redact_secrets
+
+    fake_key = "dummy_test_secret_token_999999"
+    prev = os.environ.get("GROQ_API_KEY")
+    os.environ["GROQ_API_KEY"] = fake_key
+    try:
+        assert fake_key not in redact_secrets(f"Error with {fake_key} and Bearer abc123xyz and ?key=dummy_query_999")
+        assert "dummy_query_999" not in redact_secrets("https://example.com/api?key=dummy_query_999&x=1")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = RunLogger(Path(tmp_dir), run_name="sec")
+            logger.log(f"Leaked test: {fake_key} Bearer tok_999", to_stdout=False)
+            content = logger.get_path().read_text(encoding="utf-8")
+            assert fake_key not in content
+            assert "tok_999" not in content
+            assert "[REDACTED]" in content
+    finally:
+        if prev is None:
+            os.environ.pop("GROQ_API_KEY", None)
+        else:
+            os.environ["GROQ_API_KEY"] = prev
+
+
+def test_sftp_uploader_discovery_and_antidup():
+    from src.pipeline.manifest import ManifestManager, calculate_file_hash
+    from src.pipeline.uploader import AdobeSFTPUploader
+
+    cfg = load_config()
+    uploader = AdobeSFTPUploader(cfg)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        res_dir = base / "batch1" / "result"
+        res_dir.mkdir(parents=True)
+        # Prompts folder should be ignored
+        (base / "prompts").mkdir()
+
+        img1 = res_dir / "asset_01.jpg"
+        img2 = res_dir / "asset_02.png"
+        Image.new("RGB", (100, 100), (120, 120, 120)).save(img1)
+        Image.new("RGBA", (100, 100), (120, 120, 120, 255)).save(img2)
+
+        # Before marking uploaded: both discovered
+        pending = uploader.discover_pending_files(base)
+        assert len(pending) == 2
+
+        # Dry run reports 2 pending, 0 uploaded
+        dry = uploader.upload_pending(base, dry_run=True, log_callback=lambda *_: None)
+        assert dry["pending"] == 2
+        assert dry["uploaded"] == 0
+
+        # Mark img1 as uploaded -> only img2 should remain pending
+        manifest = ManifestManager(res_dir / "manifest.json")
+        manifest.mark_uploaded(calculate_file_hash(img1), img1.name)
+        pending_after = uploader.discover_pending_files(base)
+        assert len(pending_after) == 1
+        assert pending_after[0][0].name == "asset_02.png"
+
+
+
+

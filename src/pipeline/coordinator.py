@@ -1,27 +1,29 @@
 """
-Pipeline Coordinator for Microstock Generator Automation.
-100% Local, Fast, and Production-Ready (Image Output Only — No CSV/JSON):
-- Cross-Platform (Linux, macOS, Windows)
-- Per-Image Smart Classification (Auto-detect Isolated PNG vs Full-Scene JPEG)
-- Optional Background Removal & Dedicated Cutout Output Option
-- pHash Deduplication (Local)
-- AI Super-Resolution (Upscayl 4x / optional passthrough)
-- 5-Stage Edge-Perfection Post-Processing
-- Strict Technical Validation (< 45 MB, 4-100 MP, Filename <= 30 chars)
+Pipeline Coordinator for Microstock Generator Automation (Hybrid Free-Tier Workflow).
+Step 4 Production Pipeline:
+- [1/5] pHash Deduplication (Local)
+- [2/5] Free-Tier Vision QC & Adobe Stock SEO Metadata (Gemini Flash -> OpenRouter :free -> Local fallback)
+- [3/5] AI Super-Resolution (Upscayl 4x / optional passthrough)
+- [4/5] High-Precision Post-Processing (Isolated Anti-Halo PNG vs Full-Scene sRGB JPEG)
+- [5/5] Technical Validation + IPTC/XMP ExifTool Embed + Adobe Stock CSV + Manifest + .txt Run Log
 """
 
 import shutil
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 import numpy as np
 from PIL import Image, ImageOps
 
+from .compliance import sanitize_filename
 from .config import PipelineConfig, load_config
 from .dedup import filter_near_duplicates
-from .upscaler import UpscaylEngine
+from .logger import RunLogger
+from .manifest import ManifestManager, calculate_file_hash
+from .metadata import MetadataEngine
 from .postprocess import PostProcessor
+from .qa_auditor import VisionQAAuditor
+from .upscaler import UpscaylEngine
 from .validator import TechnicalValidator
-from .compliance import sanitize_filename
 
 
 def classify_asset_type(image_path: Path) -> str:
@@ -54,14 +56,20 @@ def classify_asset_type(image_path: Path) -> str:
 
 
 class PipelineCoordinator:
-    def __init__(self, config: Optional[PipelineConfig] = None):
+    def __init__(self, config: Optional[PipelineConfig] = None, run_logger: Optional[RunLogger] = None):
         self.config = config or load_config()
+        self.run_logger = run_logger
         self.upscaler = UpscaylEngine(self.config)
         self.postprocessor = PostProcessor(self.config)
         self.validator = TechnicalValidator(self.config)
+        self.qa_auditor = VisionQAAuditor(self.config)
+        self.metadata_engine = MetadataEngine(self.config)
 
     def log(self, msg: str = ""):
-        print(msg, flush=True)
+        if self.run_logger is not None:
+            self.run_logger.log(msg)
+        else:
+            print(msg, flush=True)
 
     def process_batch_folder(
         self,
@@ -71,12 +79,13 @@ class PipelineCoordinator:
         custom_output_folder: Optional[Path] = None
     ) -> Dict[str, Any]:
         """
-        Process a single batch folder through the entire local pipeline.
-        Outputs ONLY validated, production-ready images (no CSV or JSON).
+        Process a single batch folder through the full Step 4 pipeline.
+        Outputs production-ready images, adobe_stock_metadata.csv, manifest.json, and .txt run log.
         """
         self.log(f"\n==================================================")
         self.log(f"🔄 Processing Folder: [{folder.name}] (Mode: {asset_type.upper()})")
         self.log(f"   Background Removal: {'ENABLED ✅' if self.config.remove_bg else 'DISABLED (Original Background Preserved) ⚪'}")
+        self.log(f"   Free-Tier Vision  : {', '.join(self.qa_auditor.llm.available_vision_providers()) or 'OFFLINE FALLBACK (LocalMetadataEngine)'}")
         if self.config.bg_output_dir:
             self.log(f"   Cutouts Output    : {self.config.bg_output_dir}")
         self.log(f"==================================================")
@@ -102,10 +111,10 @@ class PipelineCoordinator:
 
         if not raw_images:
             self.log(f"⚠️ No raw images found in '{folder.name}/raw'. Skipping.")
-            return {"folder": folder.name, "passed": 0, "failed": 0}
+            return {"folder": folder.name, "passed": 0, "failed": 0, "ai_rejected": 0}
 
         # 1. Deduplication Gate (pHash)
-        self.log(f"\n[1/4] Perceptual Hash Deduplication ({len(raw_images)} images)...")
+        self.log(f"\n[1/5] Perceptual Hash Deduplication ({len(raw_images)} images)...")
         kept_images, rejected_dups = filter_near_duplicates(
             raw_images,
             threshold=self.config.dedup_phash_threshold
@@ -122,14 +131,69 @@ class PipelineCoordinator:
         image_types: Dict[str, str] = {}
         for img_path in kept_images:
             if not self.config.remove_bg:
-                # If remove_bg is disabled, treat all images as scenes (keeping original background)
                 detected = "scene"
             else:
                 detected = classify_asset_type(img_path) if asset_type == "auto" else asset_type
             image_types[img_path.stem] = detected
             self.log(f"  • {img_path.name} -> {detected.upper()}")
 
-        # 2. Upscale (Upscayl CLI) or Passthrough
+        # 2. Free-Tier Vision QC + Adobe Stock SEO Metadata (BEFORE Upscaling to save GPU time!)
+        metadata_by_stem: Dict[str, Dict[str, Any]] = {}
+        ai_rejected_count = 0
+        qa_passed_images: List[Path] = []
+        rejected_ai_folder = folder / "rejected_ai_qa"
+
+        if self.config.enable_ai_qa or self.config.enable_vision_metadata:
+            self.log(f"\n[2/5] Free-Tier Vision QC & SEO Metadata ({len(kept_images)} images)...")
+            for idx, img_path in enumerate(kept_images, start=1):
+                img_type = image_types.get(img_path.stem, "scene")
+                meta_res = self.qa_auditor.audit_and_generate_metadata(
+                    img_path,
+                    asset_type=img_type,
+                    prompt_hint=prompt_hint or folder.name,
+                    log_callback=self.log,
+                )
+                if self.config.enable_ai_qa and not meta_res["passed"]:
+                    ai_rejected_count += 1
+                    rejected_ai_folder.mkdir(parents=True, exist_ok=True)
+                    shutil.move(img_path, rejected_ai_folder / img_path.name)
+                    self.log(
+                        f"  ❌ AI QC REJECTED [{idx}/{len(kept_images)}]: {img_path.name} "
+                        f"(score={meta_res['score']}, provider={meta_res['provider']}) -> {meta_res['detected_issues'] or meta_res['reasons']}"
+                    )
+                    continue
+
+                metadata_by_stem[img_path.stem] = meta_res
+                qa_passed_images.append(img_path)
+                self.log(
+                    f"  ✅ QC+SEO [{idx}/{len(kept_images)}]: {img_path.name} "
+                    f"(score={meta_res['score']}, provider={meta_res['provider']}) | Title: \"{meta_res['title']}\""
+                )
+        else:
+            self.log("\n[2/5] Vision QC & SEO Metadata skipped (--skip-ai-qa). Using offline LocalMetadataEngine...")
+            for img_path in kept_images:
+                img_type = image_types.get(img_path.stem, "scene")
+                local_meta = self.metadata_engine.generate_metadata_for_image(
+                    img_path, prompt_hint=prompt_hint or folder.name, asset_type=img_type
+                )
+                out_ext = ".png" if img_type == "isolated" else ".jpg"
+                local_meta["suggested_filename"] = sanitize_filename(
+                    img_path.stem, ext=out_ext, max_len=self.config.max_filename_chars
+                )
+                local_meta["provider"] = "offline_local_metadata"
+                metadata_by_stem[img_path.stem] = local_meta
+                qa_passed_images.append(img_path)
+
+        if not qa_passed_images:
+            self.log("⚠️ No images passed AI Quality Control. Skipping upscaling and export.")
+            return {
+                "folder": folder.name,
+                "passed": 0,
+                "failed": len(raw_images),
+                "ai_rejected": ai_rejected_count,
+            }
+
+        # 3. Upscale (Upscayl CLI) or Passthrough
         upscaled_folder = folder / "upscaled"
         upscaled_folder.mkdir(parents=True, exist_ok=True)
 
@@ -137,19 +201,19 @@ class PipelineCoordinator:
 
         if not can_upscale:
             if self.config.skip_upscale:
-                self.log("\n[2/4] Upscaling skipped (--skip-upscale). Passing raw images directly to post-processing...")
+                self.log("\n[3/5] Upscaling skipped (--skip-upscale). Passing images directly to post-processing...")
             else:
-                self.log("\n[2/4] ⚠️ Upscayl binary not found. Passing raw images directly to post-processing...")
-            for img in kept_images:
+                self.log("\n[3/5] ⚠️ Upscayl binary not found. Passing images directly to post-processing...")
+            for img in qa_passed_images:
                 shutil.copy2(img, upscaled_folder / img.name)
         else:
             for group_type in ("isolated", "scene"):
-                group_imgs = [p for p in kept_images if image_types.get(p.stem) == group_type]
+                group_imgs = [p for p in qa_passed_images if image_types.get(p.stem) == group_type]
                 if not group_imgs:
                     continue
 
                 model_name = self.upscaler.get_model_for_type(group_type)
-                self.log(f"\n[2/4] AI Super-Resolution 4x [{group_type.upper()}] ({len(group_imgs)} images via {model_name})...")
+                self.log(f"\n[3/5] AI Super-Resolution 4x [{group_type.upper()}] ({len(group_imgs)} images via {model_name})...")
 
                 temp_upscale_in = folder / f"_temp_{group_type}"
                 temp_upscale_in.mkdir(parents=True, exist_ok=True)
@@ -170,8 +234,7 @@ class PipelineCoordinator:
                     for img in group_imgs:
                         shutil.copy2(img, upscaled_folder / img.name)
 
-        # 3. Post-Processing
-        # Determine output folder: custom_output_folder > config.output_dir > folder / "result"
+        # 4. Post-Processing
         if custom_output_folder:
             result_folder = custom_output_folder
         elif self.config.output_dir:
@@ -183,50 +246,66 @@ class PipelineCoordinator:
         if self.config.bg_output_dir:
             self.config.bg_output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.log(f"\n[3/4] High-Precision Post-Processing -> {result_folder}...")
+        self.log(f"\n[4/5] High-Precision Post-Processing -> {result_folder}...")
 
-        upscaled_files = sorted(list(upscaled_folder.glob("*.png")) + list(upscaled_folder.glob("*.jpg")) + list(upscaled_folder.glob("*.jpeg")))
+        upscaled_files = sorted(
+            list(upscaled_folder.glob("*.png"))
+            + list(upscaled_folder.glob("*.jpg"))
+            + list(upscaled_folder.glob("*.jpeg"))
+        )
         processed_items: List[tuple] = []
 
         for idx, up_file in enumerate(upscaled_files, start=1):
+            orig_stem = up_file.stem
             if not self.config.remove_bg:
                 img_type = "scene"
             else:
-                img_type = image_types.get(up_file.stem, "isolated" if asset_type == "auto" else asset_type)
+                img_type = image_types.get(orig_stem, "isolated" if asset_type == "auto" else asset_type)
 
             out_ext = ".png" if img_type == "isolated" else ".jpg"
-            clean_filename = sanitize_filename(up_file.stem, ext=out_ext, max_len=self.config.max_filename_chars)
+            meta = metadata_by_stem.get(orig_stem, {})
+            preferred_name = meta.get("suggested_filename") or sanitize_filename(
+                orig_stem, ext=out_ext, max_len=self.config.max_filename_chars
+            )
+            # Ensure extension matches final output type
+            preferred_stem = Path(preferred_name).stem
+            clean_filename = sanitize_filename(preferred_stem, ext=out_ext, max_len=self.config.max_filename_chars)
             target_out = result_folder / clean_filename
 
             # Handle name collisions if multiple files sanitize to identical stems
             collision_idx = 1
-            while target_out.exists() and target_out.name != f"{up_file.stem}{out_ext}":
+            while target_out.exists():
                 suffix = f"_{collision_idx}"
                 stem_len = self.config.max_filename_chars - len(out_ext) - len(suffix)
-                safe_stem = sanitize_filename(up_file.stem, ext="", max_len=stem_len).rstrip("_-")
+                safe_stem = sanitize_filename(preferred_stem, ext="", max_len=stem_len).rstrip("_-")
                 target_out = result_folder / f"{safe_stem}{suffix}{out_ext}"
                 collision_idx += 1
 
             if img_type == "isolated":
                 ok, err = self.postprocessor.process_isolated_png(up_file, target_out, log_callback=self.log)
-                # If separate bg_output_dir is configured, also copy cutout there
                 if ok and self.config.bg_output_dir:
                     shutil.copy2(target_out, self.config.bg_output_dir / target_out.name)
             else:
                 ok, err = self.postprocessor.process_scene_jpeg(up_file, target_out, log_callback=self.log)
 
             if ok:
-                processed_items.append((target_out, img_type))
+                processed_items.append((target_out, img_type, orig_stem, meta))
                 self.log(f"  • Processed [{idx}/{len(upscaled_files)}] ({img_type.upper()}): {target_out.name} ✅")
             else:
                 self.log(f"  ❌ Post-processing failed on {up_file.name}: {err}")
 
-        # 4. Technical Validation
-        self.log(f"\n[4/4] Technical Validation...")
+        # 5. Technical Validation + Metadata Embedding + CSV Export + Manifest
+        self.log(f"\n[5/5] Technical Validation, Metadata Embedding & CSV Export...")
         passed_records: List[Dict[str, Any]] = []
+        csv_rows: List[Dict[str, Any]] = []
         rejected_qa_folder = folder / "rejected_qa"
+        manifest = ManifestManager(result_folder / "manifest.json")
+        exiftool_available = self.config.embed_iptc_metadata and MetadataEngine.has_exiftool()
 
-        for final_path, img_type in processed_items:
+        if self.config.embed_iptc_metadata and not exiftool_available:
+            self.log("  ℹ️ ExifTool not installed on PATH — skipping inline IPTC/XMP embed (CSV export still active).")
+
+        for final_path, img_type, orig_stem, meta in processed_items:
             val_res = self.validator.validate_asset(final_path, asset_type=img_type)
             if not val_res["is_valid"]:
                 self.log(f"  ❌ Validation FAILED for {final_path.name}: {val_res['errors']}")
@@ -234,12 +313,58 @@ class PipelineCoordinator:
                 shutil.move(final_path, rejected_qa_folder / final_path.name)
                 continue
 
-            self.log(f"  ✅ READY: {final_path.name} ({val_res['stats'].get('megapixels')} MP, {val_res['stats'].get('file_size_mb')} MB)")
+            title = meta.get("title", "")
+            keywords = meta.get("keywords", [])
+            category_id = meta.get("category_id", 8)
+
+            if exiftool_available and title:
+                embedded = MetadataEngine.embed_iptc_xmp_exiftool(
+                    final_path, title=title, keywords=keywords, log_callback=self.log
+                )
+                if embedded:
+                    self.log(f"     🏷️  IPTC/XMP embedded into {final_path.name}")
+
+            csv_rows.append({
+                "filename": final_path.name,
+                "title": title,
+                "keywords": keywords,
+                "category_id": category_id,
+                "releases": "",
+            })
+
+            try:
+                f_hash = calculate_file_hash(final_path)
+                manifest.record_asset(
+                    file_hash=f_hash,
+                    original_name=orig_stem,
+                    output_name=final_path.name,
+                    asset_type=img_type,
+                    dimensions=(val_res["stats"].get("width", 0), val_res["stats"].get("height", 0)),
+                    megapixels=val_res["stats"].get("megapixels", 0.0),
+                    file_size_mb=val_res["stats"].get("file_size_mb", 0.0),
+                    prompt=prompt_hint or folder.name,
+                    title=title,
+                    keywords=keywords,
+                    category_id=category_id,
+                )
+            except Exception:
+                pass
+
+            self.log(
+                f"  ✅ READY: {final_path.name} ({val_res['stats'].get('megapixels')} MP, "
+                f"{val_res['stats'].get('file_size_mb')} MB) | Cat #{category_id} | {len(keywords)} kw"
+            )
             if val_res["warnings"]:
                 for w in val_res["warnings"]:
                     self.log(f"     ⚠️ {w}")
 
             passed_records.append(val_res)
+
+        csv_path = None
+        if self.config.export_csv and csv_rows:
+            csv_path = result_folder / "adobe_stock_metadata.csv"
+            MetadataEngine.export_adobe_csv(csv_rows, csv_path)
+            self.log(f"\n📄 Adobe Stock Metadata CSV exported to: {csv_path}")
 
         self.log(f"\n🎉 Finished! {len(passed_records)} production-ready images saved to: {result_folder}")
 
@@ -247,7 +372,9 @@ class PipelineCoordinator:
             "folder": folder.name,
             "passed": len(passed_records),
             "failed": len(raw_images) - len(passed_records),
-            "result_folder": result_folder
+            "ai_rejected": ai_rejected_count,
+            "result_folder": result_folder,
+            "csv_path": csv_path,
         }
 
     def print_submission_checklist(self):
@@ -256,7 +383,8 @@ class PipelineCoordinator:
         self.log("📋 ADOBE STOCK SUBMISSION CHECKLIST (MANDATORY)")
         self.log("==================================================")
         self.log("When uploading to https://contributor.stock.adobe.com/:")
-        self.log(" 1. ☑️ Check: 'Created using generative AI tools' (MANDATORY for AI assets)")
-        self.log(" 2. ☑️ Check: 'People and Property are fictional' (If depicting fictional subjects)")
-        self.log(" 3. 🔍 Inspect at 100% zoom before clicking 'Submit for Review'.")
+        self.log(" 1. 📄 Upload 'adobe_stock_metadata.csv' to auto-fill Title, Keywords & Category.")
+        self.log(" 2. ☑️ Check: 'Created using generative AI tools' (MANDATORY for AI assets)")
+        self.log(" 3. ☑️ Check: 'People and Property are fictional' (If depicting fictional subjects)")
+        self.log(" 4. 🔍 Inspect at 100% zoom before clicking 'Submit for Review'.")
         self.log("==================================================\n")

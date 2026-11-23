@@ -1,15 +1,17 @@
 """
-Adobe Stock Metadata Engine & CSV Exporter.
-Fast, offline, deterministic metadata generation conforming to:
+Adobe Stock Metadata Engine, Optional ExifTool IPTC/XMP Embedder, & CSV Exporter.
+Conforms to official Adobe Stock specification:
 https://helpx.adobe.com/stock/contributor/help/csv-metadata.html
 """
 
 import csv
+import shutil
+import subprocess
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
-from .config import PipelineConfig
 from .categories import ADOBE_STOCK_CATEGORIES
+from .config import PipelineConfig
 from .local_metadata import LocalMetadataEngine
 
 
@@ -27,21 +29,15 @@ class MetadataEngine:
         Generate commercial stock title, keywords, and category ID instantly (offline).
         Uses local semantic taxonomy and keyword expansions.
         """
-        # Determine theme hint from prompt_hint or folder/filename
         theme = prompt_hint if prompt_hint else image_path.parent.name.replace("_result", "").replace("_upscaled", "")
         theme = theme.replace("_", " ")
 
-        # 1. Infer Category ID (1 to 21)
         cat_id, cat_name = LocalMetadataEngine.infer_category(theme)
-
-        # 2. Generate clean title (<= 70 chars, no commas)
         title = LocalMetadataEngine.generate_title(
             theme,
             asset_type=asset_type,
             max_chars=self.config.max_title_chars
         )
-
-        # 3. Generate 30 to 45 high-relevance keywords
         keywords = LocalMetadataEngine.generate_keywords(
             theme,
             asset_type=asset_type,
@@ -54,6 +50,55 @@ class MetadataEngine:
             "category_id": cat_id,
             "category_name": cat_name
         }
+
+    @staticmethod
+    def has_exiftool() -> bool:
+        return shutil.which("exiftool") is not None
+
+    @staticmethod
+    def embed_iptc_xmp_exiftool(
+        file_path: Path,
+        title: str,
+        keywords: List[str],
+        log_callback=None
+    ) -> bool:
+        """
+        Embed Title and Keywords directly into JPEG/PNG IPTC & XMP metadata via ExifTool
+        (if installed on system PATH). Gracefully skips if ExifTool is not installed.
+        """
+        exiftool_bin = shutil.which("exiftool")
+        if not exiftool_bin:
+            return False
+
+        cmd = [
+            exiftool_bin,
+            "-overwrite_original",
+            "-charset", "utf8",
+            f"-IPTC:ObjectName={title}",
+            f"-XMP:Title={title}",
+            f"-IPTC:Caption-Abstract={title}",
+            f"-XMP:Description={title}",
+            "-IPTC:Keywords=",
+            "-XMP:Subject=",
+        ]
+        for kw in keywords:
+            k = kw.strip()
+            if k:
+                cmd.append(f"-IPTC:Keywords={k}")
+                cmd.append(f"-XMP:Subject={k}")
+        cmd.append(str(file_path))
+
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+            if proc.returncode == 0:
+                return True
+            if log_callback:
+                log_callback(f"  ⚠️ ExifTool warning on {file_path.name}: {proc.stderr.strip()}")
+            return False
+        except Exception as e:
+            if log_callback:
+                log_callback(f"  ⚠️ ExifTool error on {file_path.name}: {e}")
+            return False
 
     @staticmethod
     def export_adobe_csv(records: List[Dict[str, Any]], csv_path: Path):

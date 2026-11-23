@@ -12,6 +12,9 @@ google-genai>=0.1.1
 python-dotenv>=1.0.0
 pyyaml>=6.0.0
 
+# SFTP Upload (Adobe Stock Contributor)
+paramiko>=3.4.0
+
 # Testing & Utilities
 pytest>=8.0.0
 tqdm>=4.66.0

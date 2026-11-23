@@ -11,7 +11,12 @@ env/
 
 # Environment variables & secrets
 .env
+.env.*
+!.env.example
 *.local
+
+# Runtime logs
+logs/
 
 # IDEs & Editors
 .idea/
@@ -33,6 +38,7 @@ output/
 *_upscaled/
 *_result/
 *_rejected_qa/
+*_rejected_ai_qa/
 *_rejected_similar/
 *_temp_*/
 cutouts/

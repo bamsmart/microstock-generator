@@ -64,4 +64,26 @@ metadata:
   min_keywords: 25
   max_keywords: 50
   strip_forbidden_words: true
-  export_csv: false
+  embed_iptc_metadata: true
+  export_csv: true
+
+free_tier:
+  groq_model: "llama-3.3-70b-versatile"
+  mistral_model: "mistral-small-latest"
+  openrouter_text_model: "meta-llama/llama-3.3-70b-instruct:free"
+  openrouter_vision_model: "google/gemma-3-27b-it:free"
+  min_delay_sec: 4.5
+  enable_ai_qa: true
+  enable_vision_metadata: true
+
+research:
+  prompts_dir: null                  # null saves to <base_dir>/prompts (default: ~/Desktop/microstock_generator/prompts)
+  default_prompt_count: 12
+
+logging:
+  logs_dir: "logs"
+
+upload:
+  sftp_host: "sftp.contributor.adobestock.com"
+  sftp_port: 22
+  max_retries: 3
