@@ -181,8 +181,8 @@ metadata:
 free_tier:
   groq_model: "openai/gpt-oss-120b"
   mistral_model: "mistral-small-latest"
-  openrouter_text_model: "meta-llama/llama-3.3-70b-instruct:free"
-  openrouter_vision_model: "google/gemma-3-27b-it:free"
+  openrouter_text_model: "openrouter/free"
+  openrouter_vision_model: "openrouter/free"
   min_delay_sec: 4.5
   enable_ai_qa: true
   enable_vision_metadata: true

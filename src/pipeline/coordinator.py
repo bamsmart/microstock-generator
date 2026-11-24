@@ -193,6 +193,7 @@ class PipelineCoordinator:
             self.log(f"\n[2/5] Free-Tier Vision QC & SEO Metadata ({len(kept_images)} images)...")
             for idx, img_path in enumerate(kept_images, start=1):
                 img_type = image_types.get(img_path.stem, "scene")
+                self.log(f"  🔎 [{idx}/{len(kept_images)}] Inspecting '{img_path.name}' ({img_type.upper()})...")
                 meta_res = self.qa_auditor.audit_and_generate_metadata(
                     img_path,
                     asset_type=img_type,
@@ -213,7 +214,9 @@ class PipelineCoordinator:
                 qa_passed_images.append(img_path)
                 self.log(
                     f"  ✅ QC+SEO [{idx}/{len(kept_images)}]: {img_path.name} "
-                    f"(score={meta_res['score']}, provider={meta_res['provider']}) | Title: \"{meta_res['title']}\""
+                    f"(score={meta_res['score']}, provider={meta_res['provider']}, "
+                    f"cat=#{meta_res.get('category_id', 8)}, kw={len(meta_res.get('keywords', []))}) "
+                    f"| Title: \"{meta_res['title']}\""
                 )
         else:
             self.log("\n[2/5] Vision QC & SEO Metadata skipped (--skip-ai-qa). Using offline LocalMetadataEngine...")

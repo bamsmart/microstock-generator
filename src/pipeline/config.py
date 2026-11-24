@@ -95,8 +95,8 @@ class PipelineConfig:
     gemini_text_model: str = "gemini-3.8-flash"
     groq_model: str = "openai/gpt-oss-120b"
     mistral_model: str = "mistral-small-latest"
-    openrouter_text_model: str = "meta-llama/llama-3.3-70b-instruct:free"
-    openrouter_vision_model: str = "google/gemma-3-27b-it:free"
+    openrouter_text_model: str = "openrouter/free"
+    openrouter_vision_model: str = "openrouter/free"
     free_tier_delay_sec: float = 4.5
     enable_ai_qa: bool = True
     enable_vision_metadata: bool = True

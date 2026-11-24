@@ -559,6 +559,28 @@ def test_incremental_per_file_skip_already_in_result():
         assert res3["passed"] == 0
 
 
+def test_llm_router_circuit_breaker_skips_dead_provider():
+    from src.pipeline.llm_router import FreeTierLLMRouter
+
+    router = FreeTierLLMRouter(min_delay_sec=0, timeout_sec=5)
+    router.gemini_key = "dummy_key_1"
+    router.mistral_key = ""
+    router.openrouter_key = "dummy_key_2"
+
+    assert router.available_vision_providers() == ["gemini", "openrouter"]
+
+    # Simulate permanent/quota error on gemini -> circuit breaker must disable it immediately
+    router._record_failure("gemini", "429 RESOURCE_EXHAUSTED: daily quota exceeded")
+    assert router.available_vision_providers() == ["openrouter"]
+
+    # Simulate 2 consecutive timeouts on openrouter -> circuit breaker disables it too
+    router._record_failure("openrouter", "timed out")
+    assert router.available_vision_providers() == ["openrouter"]  # 1st timeout still allowed
+    router._record_failure("openrouter", "timed out")
+    assert router.available_vision_providers() == []  # 2nd consecutive timeout trips breaker
+
+
+
 
 
 
