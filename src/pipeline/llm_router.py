@@ -3,8 +3,8 @@
 Zero paid APIs, zero Ollama dependency.
 
 Text Chain (Research & Prompt Engineering):
-  1. Groq Free Tier (llama-3.3-70b-versatile)
-  2. Google AI Studio Gemini Free Tier (gemini-2.5-flash)
+  1. Groq Free Tier (openai/gpt-oss-120b -> fallback openai/gpt-oss-20b)
+  2. Google AI Studio Gemini Free Tier (gemini-3.8-flash)
   3. Mistral AI Experiment Free Tier (mistral-small-latest)
   4. OpenRouter :free (meta-llama/llama-3.3-70b-instruct:free)
 
@@ -62,7 +62,7 @@ class FreeTierLLMRouter:
     def __init__(
         self,
         gemini_model: str = "gemini-3.8-flash",
-        groq_model: str = "llama-3.3-70b-versatile",
+        groq_model: str = "openai/gpt-oss-120b",
         mistral_model: str = "mistral-small-latest",
         openrouter_text_model: str = "meta-llama/llama-3.3-70b-instruct:free",
         openrouter_vision_model: str = "google/gemma-3-27b-it:free",
@@ -123,9 +123,18 @@ class FreeTierLLMRouter:
     ) -> Dict[str, Any]:
         body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout_sec, context=self._ssl_ctx) as resp:
-            raw = resp.read().decode("utf-8")
-            return json.loads(raw)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_sec, context=self._ssl_ctx) as resp:
+                raw = resp.read().decode("utf-8")
+                return json.loads(raw)
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="ignore")[:300]
+            except Exception:
+                pass
+            detail = f"{e} | {err_body}" if err_body else str(e)
+            raise RuntimeError(redact_secrets(detail)) from None
 
     def _call_openai_compat(
         self,
@@ -241,14 +250,30 @@ class FreeTierLLMRouter:
             self._throttle()
             try:
                 if provider == "groq":
-                    raw = self._call_openai_compat(
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        self.groq_key,
-                        self.groq_model,
-                        system_prompt,
-                        user_prompt,
-                        expect_json=True,
-                    )
+                    groq_candidates = [self.groq_model]
+                    for alt in ("openai/gpt-oss-120b", "openai/gpt-oss-20b"):
+                        if alt not in groq_candidates:
+                            groq_candidates.append(alt)
+                    raw = None
+                    last_groq_err = None
+                    for gm in groq_candidates:
+                        try:
+                            raw = self._call_openai_compat(
+                                "https://api.groq.com/openai/v1/chat/completions",
+                                self.groq_key,
+                                gm,
+                                system_prompt,
+                                user_prompt,
+                                expect_json=True,
+                            )
+                            break
+                        except Exception as ge:
+                            last_groq_err = ge
+                            if "404" in str(ge) or "model_decommissioned" in str(ge) or "model_not_found" in str(ge):
+                                continue
+                            raise
+                    if raw is None:
+                        raise last_groq_err or RuntimeError("Groq models unavailable")
                 elif provider == "gemini":
                     raw = self._call_gemini(
                         system_prompt=system_prompt,

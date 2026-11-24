@@ -93,7 +93,7 @@ class PipelineConfig:
 
     # Metadata & Compliance
     gemini_text_model: str = "gemini-3.8-flash"
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
     mistral_model: str = "mistral-small-latest"
     openrouter_text_model: str = "meta-llama/llama-3.3-70b-instruct:free"
     openrouter_vision_model: str = "google/gemma-3-27b-it:free"

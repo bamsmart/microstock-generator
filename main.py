@@ -86,34 +86,40 @@ def ensure_desktop_launchers(base_dir: Path, project_root: Path):
             return
 
         base_dir.mkdir(parents=True, exist_ok=True)
-        mac_launcher = base_dir / "Run_Microstock_Generator.command"
-        if not mac_launcher.exists():
-            with open(mac_launcher, "w", encoding="utf-8") as f:
-                f.write(f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Microstock_Generator.command "$@"\n')
-            mac_launcher.chmod(0o755)
+        launchers = [
+            (
+                base_dir / "Run_Microstock_Generator.command",
+                f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Microstock_Generator.command "$@"\n',
+                True,
+            ),
+            (
+                base_dir / "Run_Step1_Research.command",
+                f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Step1_Research.command "$@"\n',
+                True,
+            ),
+            (
+                base_dir / "Run_Step5_Upload.command",
+                f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Step5_Upload.command "$@"\n',
+                True,
+            ),
+            (
+                base_dir / "Run_Microstock_Generator.bat",
+                f'@echo off\ncd /d "{project_root}"\ncall run.bat %*\n',
+                False,
+            ),
+            (
+                base_dir / "run_microstock_generator.sh",
+                f'#!/usr/bin/env bash\ncd "{project_root}" && ./run.sh "$@"\n',
+                True,
+            ),
+        ]
 
-        mac_research_launcher = base_dir / "Run_Step1_Research.command"
-        if not mac_research_launcher.exists():
-            with open(mac_research_launcher, "w", encoding="utf-8") as f:
-                f.write(f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Step1_Research.command "$@"\n')
-            mac_research_launcher.chmod(0o755)
-
-        mac_upload_launcher = base_dir / "Run_Step5_Upload.command"
-        if not mac_upload_launcher.exists():
-            with open(mac_upload_launcher, "w", encoding="utf-8") as f:
-                f.write(f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Step5_Upload.command "$@"\n')
-            mac_upload_launcher.chmod(0o755)
-
-        win_launcher = base_dir / "Run_Microstock_Generator.bat"
-        if not win_launcher.exists():
-            with open(win_launcher, "w", encoding="utf-8") as f:
-                f.write(f'@echo off\ncd /d "{project_root}"\ncall run.bat %*\n')
-
-        linux_launcher = base_dir / "run_microstock_generator.sh"
-        if not linux_launcher.exists():
-            with open(linux_launcher, "w", encoding="utf-8") as f:
-                f.write(f'#!/usr/bin/env bash\ncd "{project_root}" && ./run.sh "$@"\n')
-            linux_launcher.chmod(0o755)
+        for launcher_path, expected_content, make_exec in launchers:
+            current = launcher_path.read_text(encoding="utf-8") if launcher_path.exists() else None
+            if current != expected_content:
+                launcher_path.write_text(expected_content, encoding="utf-8")
+            if make_exec:
+                launcher_path.chmod(0o755)
     except Exception:
         pass
 
@@ -245,12 +251,13 @@ def run_auto_pipeline(
     if direct_images and not folders:
         log(f"\n📦 Found {len(direct_images)} images directly in: {base_dir}")
         res_dir = custom_output or cfg.output_dir or (base_dir / "result")
-        if res_dir.exists() and list(res_dir.glob("*.png")) + list(res_dir.glob("*.jpg")):
-            log(f"⏭️  Skipping: results already exist in '{res_dir}'.")
-            return
         res = coordinator.process_batch_folder(base_dir, asset_type=asset_type, custom_output_folder=res_dir)
-        batch_summaries.append(f"{res['folder']}: passed={res['passed']}, failed={res['failed']}, ai_rejected={res.get('ai_rejected', 0)}")
-        coordinator.print_submission_checklist()
+        batch_summaries.append(
+            f"{res['folder']}: passed={res['passed']}, skipped={res.get('skipped', 0)}, "
+            f"failed={res['failed']}, ai_rejected={res.get('ai_rejected', 0)}"
+        )
+        if res["passed"] > 0:
+            coordinator.print_submission_checklist()
         if coordinator.run_logger:
             coordinator.run_logger.write_summary(batch_summaries)
         return
@@ -265,10 +272,6 @@ def run_auto_pipeline(
         result_folder = (custom_output / f.name) if custom_output else ((cfg.output_dir / f.name) if cfg.output_dir else (f / "result"))
         raw_folder = f / "raw"
 
-        if result_folder.exists() and (list(result_folder.glob("*.png")) + list(result_folder.glob("*.jpg"))):
-            log(f"⏭️  Skipping '{f.name}': results already exist in '{result_folder}'.")
-            continue
-
         imgs = [x for x in f.iterdir() if x.is_file() and x.suffix.lower() in VALID_EXTENSIONS and not x.name.startswith(".")]
         if not imgs and raw_folder.exists():
             imgs = [x for x in raw_folder.iterdir() if x.is_file() and x.suffix.lower() in VALID_EXTENSIONS and not x.name.startswith(".")]
@@ -277,10 +280,12 @@ def run_auto_pipeline(
             log(f"⏭️  Skipping '{f.name}': no images found in '{f.name}/' or '{f.name}/raw/'.")
             continue
 
-        processed_any = True
         res = coordinator.process_batch_folder(f, asset_type=asset_type, custom_output_folder=result_folder)
+        if res["passed"] > 0:
+            processed_any = True
         batch_summaries.append(
-            f"{res['folder']}: passed={res['passed']}, failed={res['failed']}, ai_rejected={res.get('ai_rejected', 0)}"
+            f"{res['folder']}: passed={res['passed']}, skipped={res.get('skipped', 0)}, "
+            f"failed={res['failed']}, ai_rejected={res.get('ai_rejected', 0)}"
         )
 
     if processed_any:

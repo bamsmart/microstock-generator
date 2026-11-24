@@ -30,7 +30,8 @@ A **$0 / Free-Tier Hybrid Microstock Automation Pipeline** that covers **high-de
 ## Core Capabilities
 
 - 📈 **Step 1 — High-Demand Seasonal Research (`--research`):** Targets the **H-60 to H-90 buyer window** (what commercial buyers search 2–3 months ahead), pulls live Google Trends RSS signals, synthesizes copyright-safe commercial prompts with automatic Adobe Stock prompt linting (`lint_commercial_prompt` strips brands, artists, `"in the style of ..."`, protected landmarks, and AI buzzword spam while enforcing copy space / `#FFFFFF` uncropped silhouette guardrails), and exports `Suggested File` (≤ 30 chars) into `~/Desktop/microstock_generator/prompts/`.
-- 🧠 **Free-Tier Cloud AI Router ($0, Zero Credit Card):** Automatically routes text & vision tasks across free-tier providers with built-in RPM throttling, `certifi` SSL support (fixes macOS Python SSL errors), and automatic fallback (**Groq → Gemini `gemini-3.8-flash` → Mistral → OpenRouter `:free`**), plus deterministic offline fallbacks when no API key is configured.
+- 🧠 **Free-Tier Cloud AI Router ($0, Zero Credit Card):** Automatically routes text & vision tasks across free-tier providers with built-in RPM throttling, `certifi` SSL support (fixes macOS Python SSL errors), and automatic fallback (**Groq `openai/gpt-oss-120b` → `openai/gpt-oss-20b` → Gemini `gemini-3.8-flash` → Mistral → OpenRouter `:free`**), plus deterministic offline fallbacks when no API key is configured.
+- ♻️ **Per-File Incremental Processing:** Tracks raw SHA-256 hashes in `result/manifest.json` so adding new images to an existing `raw/` folder only processes the **new** files, skips already-processed assets (saving Vision quota & GPU time), and appends cleanly to `adobe_stock_metadata.csv`.
 - 🔍 **Single-Call Vision QC + Page-1 Adobe Stock SEO:** Audits raw AI images **before** upscaling (rejecting bad hands, garbled text, artifacts into `rejected_ai_qa/`) while simultaneously generating ultra-specific Titles (≤ 70 chars, no commas), 3-tier ranked Keywords (35–45, blocking generic filler spam), Category IDs (1–21), and SEO Filenames (≤ 30 chars).
 - ✂️ **True Anti-Halo Cutouts:** Combines BiRefNet-Lite segmentation, edge-aware Guided Filtering, Color-Projection Matting, and mathematical white-matte un-premultiplication to eliminate white halos on isolated PNGs.
 - ⚡ **AI Super-Resolution:** Integrates with local Upscayl 4x models (`ultramix-balanced-4x` for isolated, `high-fidelity-4x` for scenes) to guarantee 4 MP – 100 MP microstock standards.
@@ -73,7 +74,7 @@ flowchart TD
 | **Step 4** | `Run_Microstock_Generator.command` | Processes all `<batch>/raw/` folders (Dedup → Vision QC & SEO → Upscayl 4x → Anti-Halo/sRGB → `adobe_stock_metadata.csv` + `.txt` log) with `caffeinate -i` sleep prevention. |
 | **Step 5** | `Run_Step5_Upload.command` | Uploads pending `result/` assets to Adobe Stock SFTP (for qualified SFTP accounts) with anti-duplicate tracking. |
 
-> 🪟 **Windows / Linux:** Use `run.bat` (Windows) or `./run.sh` (Linux/macOS). Launchers auto-create and self-heal `.venv`.
+> 🪟 **Windows / Linux:** Use `run.bat` (Windows) or `./run.sh` (Linux/macOS). Launchers auto-create and self-heal `.venv`, and Desktop `.command` shortcuts automatically stay in sync with the repository.
 
 ---
 
@@ -178,7 +179,7 @@ metadata:
   export_csv: true
 
 free_tier:
-  groq_model: "llama-3.3-70b-versatile"
+  groq_model: "openai/gpt-oss-120b"
   mistral_model: "mistral-small-latest"
   openrouter_text_model: "meta-llama/llama-3.3-70b-instruct:free"
   openrouter_vision_model: "google/gemma-3-27b-it:free"
@@ -243,9 +244,10 @@ Adobe Stock only unlocks SFTP for qualified accounts with established approval h
 </details>
 
 <details>
-<summary><b>3. How do I re-process a batch that already has a result/ folder?</b></summary>
+<summary><b>3. How do I add new images to an existing batch or force a full re-process?</b></summary>
 <br>
-Delete or rename the existing <code>result/</code> folder inside that batch and re-run <code>Run_Microstock_Generator.command</code>.
+<b>Adding new images:</b> Just drop new raw files into <code>&lt;batch&gt;/raw/</code> and double-click <code>Run_Microstock_Generator.command</code>. Already-processed files are automatically skipped (via SHA-256 <code>raw_hash</code> in <code>result/manifest.json</code>), and only the new files are processed and appended to <code>adobe_stock_metadata.csv</code>.<br><br>
+<b>Full re-process from scratch:</b> Delete or rename the existing <code>result/</code> folder inside that batch and re-run <code>Run_Microstock_Generator.command</code>.
 </details>
 
 ---

@@ -111,12 +111,58 @@ class PipelineCoordinator:
 
         if not raw_images:
             self.log(f"⚠️ No raw images found in '{folder.name}/raw'. Skipping.")
-            return {"folder": folder.name, "passed": 0, "failed": 0, "ai_rejected": 0}
+            return {"folder": folder.name, "passed": 0, "skipped": 0, "failed": 0, "ai_rejected": 0}
+
+        # Resolve result folder & load manifest early for per-file incremental skipping
+        if custom_output_folder:
+            result_folder = custom_output_folder
+        elif self.config.output_dir:
+            result_folder = self.config.output_dir / folder.name
+        else:
+            result_folder = folder / "result"
+
+        manifest = ManifestManager(result_folder / "manifest.json")
+        raw_hashes: Dict[str, str] = {}
+        pending_raw_images: List[Path] = []
+        skipped_count = 0
+
+        for img in raw_images:
+            try:
+                r_hash = calculate_file_hash(img)
+            except Exception:
+                r_hash = ""
+            raw_hashes[img.stem] = r_hash
+
+            existing_out = manifest.is_raw_already_processed(r_hash, img.stem, result_folder)
+            if not existing_out and result_folder.exists():
+                # Backward-compatible check for legacy results without manifest.json
+                for ext in (".png", ".jpg"):
+                    cand_name = sanitize_filename(img.stem, ext=ext, max_len=self.config.max_filename_chars)
+                    if (result_folder / cand_name).exists():
+                        existing_out = cand_name
+                        break
+
+            if existing_out:
+                skipped_count += 1
+                self.log(f"  ⏭️  Already in result/: {img.name} -> {existing_out} (skipping)")
+            else:
+                pending_raw_images.append(img)
+
+        if not pending_raw_images:
+            self.log(f"✅ All {skipped_count} raw image(s) in '{folder.name}' are already in '{result_folder.name}/'. Nothing new to process.")
+            return {
+                "folder": folder.name,
+                "passed": 0,
+                "skipped": skipped_count,
+                "failed": 0,
+                "ai_rejected": 0,
+                "result_folder": result_folder,
+            }
 
         # 1. Deduplication Gate (pHash)
-        self.log(f"\n[1/5] Perceptual Hash Deduplication ({len(raw_images)} images)...")
+        self.log(f"\n[1/5] Perceptual Hash Deduplication ({len(pending_raw_images)} new image(s), {skipped_count} skipped)...")
         kept_images, rejected_dups = filter_near_duplicates(
-            raw_images,
+            pending_raw_images,
             threshold=self.config.dedup_phash_threshold
         )
         if rejected_dups:
@@ -189,7 +235,8 @@ class PipelineCoordinator:
             return {
                 "folder": folder.name,
                 "passed": 0,
-                "failed": len(raw_images),
+                "skipped": skipped_count,
+                "failed": len(pending_raw_images),
                 "ai_rejected": ai_rejected_count,
             }
 
@@ -235,24 +282,21 @@ class PipelineCoordinator:
                         shutil.copy2(img, upscaled_folder / img.name)
 
         # 4. Post-Processing
-        if custom_output_folder:
-            result_folder = custom_output_folder
-        elif self.config.output_dir:
-            result_folder = self.config.output_dir / folder.name
-        else:
-            result_folder = folder / "result"
-
         result_folder.mkdir(parents=True, exist_ok=True)
         if self.config.bg_output_dir:
             self.config.bg_output_dir.mkdir(parents=True, exist_ok=True)
 
         self.log(f"\n[4/5] High-Precision Post-Processing -> {result_folder}...")
 
-        upscaled_files = sorted(
-            list(upscaled_folder.glob("*.png"))
-            + list(upscaled_folder.glob("*.jpg"))
-            + list(upscaled_folder.glob("*.jpeg"))
-        )
+        active_stems = {p.stem for p in qa_passed_images}
+        upscaled_files = sorted([
+            f for f in (
+                list(upscaled_folder.glob("*.png"))
+                + list(upscaled_folder.glob("*.jpg"))
+                + list(upscaled_folder.glob("*.jpeg"))
+            )
+            if f.stem in active_stems
+        ])
         processed_items: List[tuple] = []
 
         for idx, up_file in enumerate(upscaled_files, start=1):
@@ -299,7 +343,6 @@ class PipelineCoordinator:
         passed_records: List[Dict[str, Any]] = []
         csv_rows: List[Dict[str, Any]] = []
         rejected_qa_folder = folder / "rejected_qa"
-        manifest = ManifestManager(result_folder / "manifest.json")
         exiftool_available = self.config.embed_iptc_metadata and MetadataEngine.has_exiftool()
 
         if self.config.embed_iptc_metadata and not exiftool_available:
@@ -346,6 +389,7 @@ class PipelineCoordinator:
                     title=title,
                     keywords=keywords,
                     category_id=category_id,
+                    raw_hash=raw_hashes.get(orig_stem, ""),
                 )
             except Exception:
                 pass
@@ -371,7 +415,8 @@ class PipelineCoordinator:
         return {
             "folder": folder.name,
             "passed": len(passed_records),
-            "failed": len(raw_images) - len(passed_records),
+            "skipped": skipped_count,
+            "failed": len(pending_raw_images) - len(passed_records),
             "ai_rejected": ai_rejected_count,
             "result_folder": result_folder,
             "csv_path": csv_path,

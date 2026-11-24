@@ -60,6 +60,21 @@ class ManifestManager:
         rec["uploaded_host"] = remote_host
         self.save()
 
+    def is_raw_already_processed(self, raw_hash: str, raw_stem: str, result_folder: Path) -> Optional[str]:
+        """
+        Return existing output filename if this raw asset (by raw_hash or original_name)
+        was already processed AND its output file still exists in result_folder.
+        """
+        for rec in self.data.get("records", {}).values():
+            out_name = rec.get("output_name", "")
+            if not out_name:
+                continue
+            if not (result_folder / out_name).exists():
+                continue
+            if (raw_hash and rec.get("raw_hash") == raw_hash) or rec.get("original_name") == raw_stem:
+                return out_name
+        return None
+
     def record_asset(
         self,
         file_hash: str,
@@ -72,10 +87,12 @@ class ManifestManager:
         prompt: Optional[str] = None,
         title: Optional[str] = None,
         keywords: Optional[list] = None,
-        category_id: Optional[int] = None
+        category_id: Optional[int] = None,
+        raw_hash: Optional[str] = None
     ):
         self.data.setdefault("records", {})[file_hash] = {
             "original_name": original_name,
+            "raw_hash": raw_hash or "",
             "output_name": output_name,
             "asset_type": asset_type,
             "dimensions": f"{dimensions[0]}x{dimensions[1]}",

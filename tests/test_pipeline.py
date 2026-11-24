@@ -516,6 +516,50 @@ def test_commercial_prompt_linter_adobe_rules():
     assert "no text" in low_iso
 
 
+def test_incremental_per_file_skip_already_in_result():
+    from src.pipeline.coordinator import PipelineCoordinator
+
+    cfg = load_config()
+    cfg.skip_upscale = True
+    cfg.remove_bg = False
+    cfg.enable_ai_qa = False
+    cfg.enable_vision_metadata = False
+    cfg.embed_iptc_metadata = False
+    cfg.export_csv = True
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        batch = Path(tmp_dir) / "workspace_batch"
+        raw_dir = batch / "raw"
+        raw_dir.mkdir(parents=True)
+
+        # Run 1: 1st raw image (2100x2000 = 4.2 MP)
+        img1 = Image.new("RGB", (2100, 2000), (120, 90, 60))
+        img1.save(raw_dir / "oak_desk_01.jpg", format="JPEG")
+
+        coord = PipelineCoordinator(cfg)
+        res1 = coord.process_batch_folder(batch, asset_type="scene")
+        assert res1["passed"] == 1
+        assert res1["skipped"] == 0
+
+        # Run 2: add 2nd raw image -> 1st must be skipped, only 2nd processed
+        img2 = Image.new("RGB", (2100, 2000), (40, 110, 140))
+        img2.save(raw_dir / "solar_panel_02.jpg", format="JPEG")
+
+        res2 = coord.process_batch_folder(batch, asset_type="scene")
+        assert res2["skipped"] == 1
+        assert res2["passed"] == 1
+
+        csv_text = (batch / "result" / "adobe_stock_metadata.csv").read_text(encoding="utf-8-sig")
+        assert "oak_desk_01.jpg" in csv_text
+        assert "solar_panel_02.jpg" in csv_text
+
+        # Run 3: no new images -> both skipped, 0 processed
+        res3 = coord.process_batch_folder(batch, asset_type="scene")
+        assert res3["skipped"] == 2
+        assert res3["passed"] == 0
+
+
+
 
 
 
