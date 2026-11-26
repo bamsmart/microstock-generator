@@ -29,11 +29,11 @@ A **$0 / Free-Tier Hybrid Microstock Automation Pipeline** that covers **high-de
 
 ## Core Capabilities
 
-- 📈 **Step 1 — High-Demand Seasonal Research (`--research`):** Targets the **H-60 to H-90 buyer window** (what commercial buyers search 2–3 months ahead), pulls live Google Trends RSS signals, synthesizes copyright-safe commercial prompts with automatic Adobe Stock prompt linting (`lint_commercial_prompt` strips brands, artists, `"in the style of ..."`, protected landmarks, and AI buzzword spam while enforcing copy space / `#FFFFFF` uncropped silhouette guardrails), and exports `Suggested File` (≤ 30 chars) into `~/Desktop/microstock_generator/prompts/`.
+- 📈 **Step 1 — High-Demand Seasonal Research (`--research`):** Targets the **H-90 to H-120 buyer window** (what commercial buyers license **3–4 months ahead**), rotates across 24 evergreen commercial verticals daily, pulls live Google Trends RSS signals, prevents daily repeats via a **120-day rolling `prompt_history.json`** (exact + fuzzy Jaccard deduplication), enforces edge-safe isolated studio prompt rules (`#FFFFFF` zero-gradient backdrop, `100mm macro f/11` sharpness, opaque high-contrast subjects, zero shadows, plus matching `Negative Prompt`), and exports `Suggested File` (≤ 30 chars) into `~/Desktop/microstock_generator/prompts/`.
 - 🧠 **Free-Tier Cloud AI Router ($0, Zero Credit Card):** Automatically routes text & vision tasks across free-tier providers with built-in RPM throttling, `certifi` SSL support (fixes macOS Python SSL errors), and automatic fallback (**Groq `openai/gpt-oss-120b` → `openai/gpt-oss-20b` → Gemini `gemini-3.8-flash` → Mistral → OpenRouter `:free`**), plus deterministic offline fallbacks when no API key is configured.
 - ♻️ **Per-File Incremental Processing:** Tracks raw SHA-256 hashes in `result/manifest.json` so adding new images to an existing `raw/` folder only processes the **new** files, skips already-processed assets (saving Vision quota & GPU time), and appends cleanly to `adobe_stock_metadata.csv`.
-- 🔍 **Single-Call Vision QC + Page-1 Adobe Stock SEO:** Audits raw AI images **before** upscaling (rejecting bad hands, garbled text, artifacts into `rejected_ai_qa/`) while simultaneously generating ultra-specific Titles (≤ 70 chars, no commas), 3-tier ranked Keywords (35–45, blocking generic filler spam), Category IDs (1–21), and SEO Filenames (≤ 30 chars).
-- ✂️ **True Anti-Halo Cutouts:** Combines BiRefNet-Lite segmentation, edge-aware Guided Filtering, Color-Projection Matting, and mathematical white-matte un-premultiplication to eliminate white halos on isolated PNGs.
+- 🔍 **Single-Call Vision QC + Page-1 Adobe Stock SEO:** Audits raw AI images at 100% detail **before** upscaling (rejecting halos, messy shadows, pixel gaps, soft focus, plastic artifacts, bad hands, garbled text into `rejected_ai_qa/`) while simultaneously generating ultra-specific Titles (≤ 70 chars, no commas), 3-tier ranked Keywords (35–45, blocking generic filler spam), Category IDs (1–21), and SEO Filenames (≤ 30 chars).
+- ✂️ **True Anti-Halo Cutouts + Pixel-Gap Sealing:** Combines BiRefNet-Lite segmentation, edge-aware Guided Filtering, Color-Projection Matting, interior pinhole sealing (`fill_interior_pinholes` to eliminate *celah pixel*), mathematical white-matte un-premultiplication, and embedded **sRGB IEC61966-2.1** ICC profiles on both transparent PNGs and JPEGs.
 - ⚡ **AI Super-Resolution:** Integrates with local Upscayl 4x models (`ultramix-balanced-4x` for isolated, `high-fidelity-4x` for scenes) to guarantee 4 MP – 100 MP microstock standards.
 - 🏷️ **Adobe Stock CSV + IPTC/XMP + `.txt` Logs:** Exports official `adobe_stock_metadata.csv` (UTF-8), embeds IPTC/XMP metadata via ExifTool (when installed), tracks SHA-256 history in `manifest.json`, and writes human-readable run reports to `logs/run_*.txt`.
 - 📤 **Step 5 — Optional SFTP Upload & Daily Scheduler:** Supports `sftp.contributor.adobestock.com` (Paramiko or system `curl` SFTP fallback) with anti-duplicate upload tracking and optional macOS `launchd` nightly scheduling.
@@ -44,7 +44,7 @@ A **$0 / Free-Tier Hybrid Microstock Automation Pipeline** that covers **high-de
 
 ```mermaid
 flowchart TD
-    S1["Step 1: Run_Step1_Research.command<br>H-60..H-90 Calendar + Trends + Free-Tier LLM"] --> P1["~/Desktop/microstock_generator/prompts/<br>prompts_*.txt (Copy-Paste + Suggested File)"]
+    S1["Step 1: Run_Step1_Research.command<br>H-90..H-120 (3-4 Mo Ahead) + 120d Anti-Repeat"] --> P1["~/Desktop/microstock_generator/prompts/<br>prompts_*.txt (Copy-Paste + Negative + Filename)"]
     P1 --> S2["Step 2 & 3 (Manual Hybrid)<br>Generate images & save to <batch>/raw/"]
     S2 --> B["[1/5] pHash Deduplication<br>Filters similar frames -> rejected_similar/"]
     B --> V["[2/5] Free-Tier Vision QC + SEO Metadata<br>Gemini Flash / OpenRouter :free<br>Defective AI -> rejected_ai_qa/"]
@@ -80,7 +80,7 @@ flowchart TD
 
 ## Free-Tier AI Setup (Optional, $0)
 
-Without API keys, Step 1 uses curated H-60..H-90 commercial blueprints and Step 4 uses offline `LocalMetadataEngine`. For **live AI prompt synthesis** and **Vision QC + hyper-specific SEO metadata** (at **$0 / no credit card**):
+Without API keys, Step 1 uses the curated H-90..H-120 offline commercial library (with 120-day anti-repeat tracking) and Step 4 uses offline `LocalMetadataEngine`. For **live AI prompt synthesis** and **Vision QC + hyper-specific SEO metadata** (at **$0 / no credit card**):
 
 1. Copy `.env.example` to `.env`:
    ```bash
@@ -190,6 +190,9 @@ free_tier:
 research:
   prompts_dir: null                  # null -> <base_dir>/prompts
   default_prompt_count: 12
+  horizon_min_days: 90               # 3-4 months ahead buyer window
+  horizon_max_days: 120
+  history_retention_days: 120        # Daily anti-repeat history
 
 logging:
   logs_dir: "logs"

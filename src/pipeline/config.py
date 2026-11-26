@@ -111,6 +111,9 @@ class PipelineConfig:
     prompts_dir: Optional[Path] = None   # None -> <base_dir>/prompts (default: ~/Desktop/microstock_generator/prompts)
     logs_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "logs")
     default_prompt_count: int = 12
+    research_horizon_min_days: int = 90
+    research_horizon_max_days: int = 120
+    research_history_days: int = 120
 
     # Step 5: Adobe Stock SFTP Upload
     sftp_host: str = "sftp.contributor.adobestock.com"
@@ -230,6 +233,9 @@ def load_config(config_path: Path = None) -> PipelineConfig:
     if "prompts_dir" in res_cfg and res_cfg["prompts_dir"]:
         cfg.prompts_dir = _resolve_path(res_cfg["prompts_dir"])
     cfg.default_prompt_count = int(res_cfg.get("default_prompt_count", cfg.default_prompt_count))
+    cfg.research_horizon_min_days = int(res_cfg.get("horizon_min_days", cfg.research_horizon_min_days))
+    cfg.research_horizon_max_days = int(res_cfg.get("horizon_max_days", cfg.research_horizon_max_days))
+    cfg.research_history_days = int(res_cfg.get("history_retention_days", cfg.research_history_days))
 
     log_cfg = data.get("logging", {})
     if "logs_dir" in log_cfg and log_cfg["logs_dir"]:

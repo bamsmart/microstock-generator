@@ -156,6 +156,9 @@ def run_research_step(config, count: int, niche: Optional[str] = None):
         output_dir=prompts_dir,
         count=count,
         niche_focus=niche,
+        horizon_days_min=config.research_horizon_min_days,
+        horizon_days_max=config.research_horizon_max_days,
+        history_retention_days=config.research_history_days,
         log_callback=run_logger.log,
     )
 
@@ -164,6 +167,7 @@ def run_research_step(config, count: int, niche: Optional[str] = None):
         f"Buyer Window    : {result['target_window']}",
         f"Provider Used   : {result['provider']}",
         f"Prompts Created : {result['count']}",
+        f"History Tracked : {result.get('history_count', 0)} subjects (120-day anti-repeat)",
         f"Prompt Pack TXT : {result['txt_path']}",
         f"Prompt Pack JSON: {result['json_path']}",
     ])

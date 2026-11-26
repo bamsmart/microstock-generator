@@ -115,12 +115,13 @@ class VisionQAAuditor:
             "You are a Top-1% Adobe Stock Microstock SEO Consultant AND Senior Asset Quality Inspector.\n"
             "Your metadata directly determines whether this asset ranks on Page 1 and earns commercial sales.\n"
             "Perform TWO tasks in ONE strict JSON response:\n\n"
-            "TASK 1 — COMMERCIAL QUALITY AUDIT:\n"
-            "Inspect the image at 100% detail for AI defects that cause Adobe Stock rejections:\n"
-            "  - Anatomy flaws: extra/missing fingers, deformed hands, distorted eyes/faces.\n"
-            "  - Garbled text, unreadable pseudo-letters, accidental logos, or watermarks.\n"
-            "  - Melting objects, broken perspective, severe artifacts, or plastic distortion.\n"
-            "Set 'passed': false if any clear commercial defect exists (score < 0.70).\n\n"
+            "TASK 1 — COMMERCIAL QUALITY AUDIT (100% ZOOM ADOBE STOCK STANDARDS):\n"
+            "Inspect the image rigorously for defects that trigger Adobe Stock 'Quality Issues' rejections:\n"
+            "  - Exposure & Noise: Blown highlights, crushed shadows, dirty gray patches/gradients in white backdrops, color banding, or digital noise/grain.\n"
+            "  - Focus & Artifacts: Soft focus, blurry silhouette edges, waxy/plastic over-smoothing, melting objects, or broken perspective.\n"
+            "  - Isolated Cutout Integrity (CRITICAL if ISOLATED): Messy cast/drop shadows, translucent/fuzzy edges, color halos/fringing, cropped edges touching the frame border, or interior pixel gaps.\n"
+            "  - Legal / Anatomy / Text: Extra fingers, distorted faces, garbled pseudo-text, logos, or watermarks.\n"
+            "Set 'passed': false if any clear technical, cutout, or commercial defect exists (score < 0.72).\n\n"
             "TASK 2 — ULTRA-SPECIFIC ADOBE STOCK SEO METADATA (describe ONLY what is visually present):\n"
             "  1. 'title' (max 70 chars, plain English phrase, NO commas, NO brand names, NO AI buzzwords):\n"
             "     Use the high-converting Adobe Stock formula:\n"
@@ -222,7 +223,7 @@ class VisionQAAuditor:
         suggested_filename = sanitize_filename(raw_slug, ext=out_ext, max_len=self.config.max_filename_chars)
 
         score = float(data.get("score", 0.9))
-        passed = bool(data.get("passed", score >= 0.70))
+        passed = bool(data.get("passed", score >= 0.72))
 
         return {
             "passed": passed,

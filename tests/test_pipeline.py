@@ -580,6 +580,116 @@ def test_llm_router_circuit_breaker_skips_dead_provider():
     assert router.available_vision_providers() == []  # 2nd consecutive timeout trips breaker
 
 
+def test_upcoming_seasonal_window_3_to_4_months():
+    from datetime import date
+    from src.pipeline.researcher import get_upcoming_seasonal_themes, get_upcoming_target_months
+
+    ref = date(2026, 11, 26)
+    window_label, themes = get_upcoming_seasonal_themes(today=ref)
+    months = get_upcoming_target_months(today=ref)
+    assert window_label == "Feb 2027 - Mar 2027"
+    assert months == [2, 3]
+    assert any("Ramadan" in t["theme"] or "Spring" in t["theme"] for t in themes)
+
+
+def test_daily_research_no_repeats_across_consecutive_days():
+    from datetime import date, timedelta
+    from src.pipeline.llm_router import FreeTierLLMRouter
+    from src.pipeline.prompt_library import assess_isolation_risk
+    from src.pipeline.researcher import HighDemandResearcher
+
+    router = FreeTierLLMRouter(min_delay_sec=0)
+    router.groq_key = ""
+    router.gemini_key = ""
+    router.mistral_key = ""
+    router.openrouter_key = ""
+
+    researcher = HighDemandResearcher(llm_router=router)
+    base_day = date(2026, 11, 26)
+    seen_subjects = set()
+    all_prompts = []
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        out_dir = Path(tmp_dir)
+        for day_offset in range(3):
+            res = researcher.run_research(
+                out_dir,
+                count=12,
+                today=base_day + timedelta(days=day_offset),
+                log_callback=lambda *_: None,
+            )
+            assert res["count"] == 12
+            assert res["history_path"].exists()
+            txt = res["txt_path"].read_text(encoding="utf-8")
+            assert "NEGATIVE PROMPT" in txt
+            for p in res["prompts"]:
+                key = (p["asset_type"], p["subject"].lower())
+                assert key not in seen_subjects, f"Duplicate subject generated across daily runs: {key}"
+                seen_subjects.add(key)
+                all_prompts.append(p)
+                if p["asset_type"] == "isolated":
+                    low = p["prompt"].lower()
+                    assert "#ffffff" in low
+                    assert "f/11" in low
+                    assert "no drop shadow" in low
+                    assert assess_isolation_risk(p["prompt"]) == []
+
+    assert len(all_prompts) == 36
+
+
+def test_isolated_edge_risk_and_pinhole_and_png_srgb():
+    from unittest.mock import patch
+    from src.pipeline.postprocess import fill_interior_pinholes
+    from src.pipeline.prompt_library import assess_isolation_risk
+
+    # 1. Edge-risk detector catches problematic materials for isolated cutouts
+    risks = assess_isolation_risk("iced coffee in clear glass with condensation droplets and steam")
+    assert any("glass" in r for r in risks)
+    assert any("droplets" in r for r in risks)
+    assert any("steam" in r for r in risks)
+    assert assess_isolation_risk("matte ceramic coffee mug on pure white background, no glass, no steam") == []
+
+    # 2. Pinhole sealing closes tiny interior pixel cracks while keeping real cutouts and exterior open
+    alpha = np.zeros((100, 100), dtype=np.uint8)
+    alpha[10:90, 10:90] = 255
+    alpha[25:30, 25:30] = 0    # 5x5 = 25 px micro pixel gap (celah pixel) -> MUST be sealed to 255
+    alpha[50:70, 50:70] = 0    # 20x20 = 400 px genuine hole (e.g. mug handle) -> MUST stay 0
+    sealed = fill_interior_pinholes(alpha, max_pinhole_area=64)
+    assert sealed[27, 27] == 255
+    assert sealed[60, 60] == 0
+    assert sealed[0, 0] == 0
+
+    # 3. process_isolated_png embeds sRGB ICC profile and seals micro pixel cracks
+    cfg = load_config()
+    pp = PostProcessor(cfg)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        src = tmp_path / "iso_in.png"
+        dst = tmp_path / "iso_out.png"
+
+        rgb = np.full((2200, 2200, 3), 255, dtype=np.uint8)
+        rgb[300:1900, 300:1900] = [180, 70, 50]
+        Image.fromarray(rgb, mode="RGB").save(src)
+
+        mock_alpha = np.zeros((2200, 2200), dtype=np.uint8)
+        mock_alpha[300:1900, 300:1900] = 255
+        mock_alpha[1000:1004, 1000:1004] = 0  # 4x4 interior pixel crack
+        mock_rgba = Image.fromarray(np.dstack((rgb, mock_alpha)), mode="RGBA")
+
+        with patch.object(pp, "get_bg_session", return_value=object()), \
+             patch("src.pipeline.postprocess.rembg.remove", return_value=mock_rgba):
+            ok, err = pp.process_isolated_png(src, dst)
+            assert ok is True, f"process_isolated_png failed: {err}"
+            with Image.open(dst) as out_img:
+                assert out_img.format == "PNG"
+                assert out_img.mode == "RGBA"
+                assert "icc_profile" in out_img.info
+                out_alpha = np.array(out_img)[:, :, 3]
+                # Center pixel crack inside subject must be solid 255
+                cy, cx = out_alpha.shape[0] // 2, out_alpha.shape[1] // 2
+                assert out_alpha[cy, cx] == 255
+
+
 
 
 

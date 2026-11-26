@@ -80,6 +80,9 @@ free_tier:
 research:
   prompts_dir: null                  # null saves to <base_dir>/prompts (default: ~/Desktop/microstock_generator/prompts)
   default_prompt_count: 12           # 6 full-scene + 6 isolated prompts per run
+  horizon_min_days: 90               # 3 months ahead buyer-demand window start
+  horizon_max_days: 120              # 4 months ahead buyer-demand window end
+  history_retention_days: 120        # Rolling anti-repeat memory for daily generation
 
 logging:
   logs_dir: "logs"                   # Plain-text (.txt) run logs (no Telegram)

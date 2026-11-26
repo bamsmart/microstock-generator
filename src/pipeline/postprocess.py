@@ -274,6 +274,31 @@ def clean_stray_pixels(alpha: np.ndarray, min_area: int = 50) -> np.ndarray:
     return cleaned
 
 
+def fill_interior_pinholes(alpha: np.ndarray, max_pinhole_area: int = 64) -> np.ndarray:
+    """
+    Seal tiny enclosed transparent pixel cracks/pinholes inside the solid subject
+    (fixes 'celah pixel' / micro-gaps that trigger Adobe Stock Quality Rejections)
+    while preserving genuine large cutouts (such as mug handles or wreath centers).
+    """
+    holes = (alpha < 200).astype(np.uint8)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(holes, connectivity=4)
+    if num_labels <= 1:
+        return alpha
+
+    border_labels = set(np.unique(np.concatenate([
+        labels[0, :], labels[-1, :], labels[:, 0], labels[:, -1]
+    ]))) - {0}
+
+    out = alpha.copy()
+    for i in range(1, num_labels):
+        if i in border_labels:
+            continue
+        if stats[i, cv2.CC_STAT_AREA] <= max_pinhole_area:
+            out[labels == i] = 255
+
+    return out
+
+
 def decontaminate_rgb_fringes(rgb: np.ndarray, alpha: np.ndarray) -> np.ndarray:
     """
     True Anti-Halo: Extrapolates the nearest solid foreground pixel RGB into
@@ -474,9 +499,10 @@ class PostProcessor:
                 # Stage 4: Exterior White/Shadow Collar Flood Trimmer
                 alpha = trim_white_background_overshoot(raw_rgb, alpha, scale_ratio=scale_ratio)
 
-                # Stage 5: Stray Debris Cleanup
+                # Stage 5: Stray Debris Cleanup & Interior Pixel-Gap (Pinhole) Sealing
                 if self.config.cleanup_stray_pixels:
                     alpha = clean_stray_pixels(alpha, min_area=self.config.stray_pixel_min_area)
+                alpha = fill_interior_pinholes(alpha, max_pinhole_area=max(64, int(36 * scale_ratio * scale_ratio)))
 
                 # Stage 6: Studio-Grade White Matte Removal & Deep-Core Anti-Halo Decontamination
                 if self.config.color_decontaminate:
@@ -508,9 +534,15 @@ class PostProcessor:
                     clean_pil = clean_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
                     w, h = clean_pil.size
 
-                # Save with maximum lossless compression
+                # Save with maximum lossless compression + mandatory sRGB IEC61966-2.1 ICC profile
                 output_image_path.parent.mkdir(parents=True, exist_ok=True)
-                clean_pil.save(output_image_path, format="PNG", optimize=True, compress_level=9)
+                clean_pil.save(
+                    output_image_path,
+                    format="PNG",
+                    optimize=True,
+                    compress_level=9,
+                    icc_profile=_SRGB_PROFILE_BYTES,
+                )
 
                 # 45 MB File Size Guard
                 file_size_mb = output_image_path.stat().st_size / (1024 * 1024)
@@ -519,7 +551,13 @@ class PostProcessor:
                     new_w = int(w * 0.85)
                     new_h = int(h * 0.85)
                     clean_pil = clean_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                    clean_pil.save(output_image_path, format="PNG", optimize=True, compress_level=9)
+                    clean_pil.save(
+                        output_image_path,
+                        format="PNG",
+                        optimize=True,
+                        compress_level=9,
+                        icc_profile=_SRGB_PROFILE_BYTES,
+                    )
 
                 return True, "Success"
 

@@ -174,14 +174,16 @@ def lint_commercial_prompt(prompt: str, asset_type: str = "scene") -> Tuple[str,
     lower = cleaned.lower()
 
     # 3. Guarantee mandatory commercial guardrails per asset type
+    from .prompt_library import ISOLATED_RECIPE_PARTS, assess_isolation_risk
+
     additions: List[str] = []
     if asset_type == "isolated":
-        if "white background" not in lower and "#ffffff" not in lower:
-            additions.append("isolated on a pure solid white background (#FFFFFF)")
-        if "uncropped" not in lower and "margin" not in lower and "filling" not in lower:
-            additions.append("centered full uncropped silhouette filling 78% of frame with clean margin")
-        if "no drop shadow" not in lower and "no cast shadow" not in lower and "no ground shadow" not in lower:
-            additions.append("soft even studio lighting, crisp edges, no drop shadows")
+        # Warn about edge-risk materials (glass, fur, smoke, droplets, etc.) that cause PNG halos/pixel gaps
+        for risk in assess_isolation_risk(cleaned):
+            warnings.append(f"Isolated cutout risk detected ({risk}): may cause edge halos or pixel gaps.")
+        for markers, clause in ISOLATED_RECIPE_PARTS:
+            if not any(m in lower for m in markers):
+                additions.append(clause)
     else:
         if "copy space" not in lower and "negative space" not in lower:
             additions.append("generous clean negative copy space for designer typography")
