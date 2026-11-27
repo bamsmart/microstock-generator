@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Microstock Generator - 1-Click Step 1 Research Launcher (macOS)
-# Runs High-Demand Research -> Commercial-Grade Copy-Paste Prompt Pack (.txt)
-# and automatically opens the generated prompt file for instant copy-paste.
+# Step 1: High-Demand Seasonal Research -> Commercial-Grade Prompt Pack (.txt)
+# Runs 3-4 months ahead (H-90..H-120) research with 120-day anti-repeat history
+# and automatically opens the newest prompts_*.txt file for copy-paste.
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -487,7 +487,7 @@ class HighDemandResearcher:
             " 2. If your generator supports Negative Prompt / Exclude / --no, paste NEGATIVE PROMPT too.",
             " 3. Match the recommended Aspect Ratio (3:2 for Scenes, 1:1 for Isolated PNGs).",
             " 4. Save generated images into: ~/Desktop/microstock_generator/<folder_slug>/raw/",
-            " 5. Run Step 4 pipeline: Run_Microstock_Generator.command (Vision QC + SEO + Upscale + CSV)",
+            " 5. Run Step 2 pipeline: Step2_Process_And_Metadata.command (Vision QC + SEO + Upscale + CSV)",
             "",
         ]
 

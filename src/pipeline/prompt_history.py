@@ -73,11 +73,18 @@ class PromptHistory:
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps({"retention_days": self.retention_days, "entries": self.entries}, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        tmp.replace(self.path)
+        try:
+            tmp.write_text(
+                json.dumps({"retention_days": self.retention_days, "entries": self.entries}, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            tmp.replace(self.path)
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def _signature_text(self, subject: str, theme: str, raw_prompt: str) -> str:
         head = " ".join((raw_prompt or "").split()[:22])

@@ -29,12 +29,14 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:
         pass
 
+from src.pipeline.analytics import generate_portfolio_report
 from src.pipeline.config import PROJECT_ROOT, load_config
 from src.pipeline.coordinator import PipelineCoordinator
 from src.pipeline.llm_router import FreeTierLLMRouter
 from src.pipeline.logger import RunLogger
 from src.pipeline.metadata import MetadataEngine
 from src.pipeline.researcher import HighDemandResearcher
+from src.pipeline.semantic_audit import SemanticAuditor
 from src.pipeline.uploader import AdobeSFTPUploader
 
 
@@ -87,14 +89,27 @@ def ensure_desktop_launchers(base_dir: Path, project_root: Path):
 
         base_dir.mkdir(parents=True, exist_ok=True)
 
-        # Clean up legacy / mixed-OS launcher filenames on Desktop
+        # Clean up legacy / stale launcher filenames on Desktop
         legacy_names = (
             "Run_Microstock_Generator.bat",
             "Run_Microstock_Generator.command",
             "Run_Step1_Research.command",
             "Run_Step2_Microstock_Generator.command",
             "Run_Step5_Upload.command",
+            "Run_Upscayl.command",
             "run_microstock_generator.sh",
+            "Step2_Open_Raw_Folder.command",
+            "Step2_Open_Raw_Folder.bat",
+            "Step2_Open_Raw_Folder.sh",
+            "Step3_Process_And_Metadata.command",
+            "Step3_Process_And_Metadata.bat",
+            "Step3_Process_And_Metadata.sh",
+            "Step4_QA_Report_And_Preview.command",
+            "Step4_QA_Report_And_Preview.bat",
+            "Step4_QA_Report_And_Preview.sh",
+            "Step5_Upload_SFTP.command",
+            "Step5_Upload_SFTP.bat",
+            "Step5_Upload_SFTP.sh",
         )
         for old_name in legacy_names:
             old_path = base_dir / old_name
@@ -105,17 +120,17 @@ def ensure_desktop_launchers(base_dir: Path, project_root: Path):
             launchers = [
                 (
                     base_dir / "Step1_Research_Prompts.command",
-                    f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Step1_Research.command "$@"\n',
+                    f'#!/usr/bin/env bash\ncd "{project_root}" && ./Step1_Research_Prompts.command "$@"\n',
                     True,
                 ),
                 (
                     base_dir / "Step2_Process_And_Metadata.command",
-                    f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Microstock_Generator.command "$@"\n',
+                    f'#!/usr/bin/env bash\ncd "{project_root}" && ./Step2_Process_And_Metadata.command "$@"\n',
                     True,
                 ),
                 (
                     base_dir / "Step3_Upload_SFTP.command",
-                    f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Step5_Upload.command "$@"\n',
+                    f'#!/usr/bin/env bash\ncd "{project_root}" && ./Step3_Upload_SFTP.command "$@"\n',
                     True,
                 ),
             ]
@@ -265,7 +280,10 @@ def run_auto_pipeline(
         log(f"🖼️  Cutouts Output     : {cfg.bg_output_dir}")
     log(f"🤖 Upscayl Binary     : {'OK ✅' if coordinator.upscaler.verify_binary() else 'MISSING ❌ (Skipped/Passthrough)'}")
     log(f"🧠 Free-Tier Vision   : {', '.join(coordinator.qa_auditor.llm.available_vision_providers()) or 'OFFLINE (LocalMetadataEngine)'}")
-    log(f"🏷️  ExifTool IPTC      : {'OK ✅' if MetadataEngine.has_exiftool() else 'NOT INSTALLED (CSV still exported)'}")
+    xmp_mode = "ExifTool (System)" if MetadataEngine.has_exiftool() else "Pure-Python XMP/EXIF ✅"
+    log(f"🏷️  Metadata Embed     : {xmp_mode if cfg.embed_iptc_metadata else 'DISABLED ⚪'}")
+    clip_mode = "ENABLED (OpenCLIP ViT-B-32) ✅" if (cfg.semantic_audit_enabled and SemanticAuditor.packages_installed()) else "SKIPPED/OFFLINE ⚪"
+    log(f"🧬 Semantic Audit     : {clip_mode}")
     log(f"🎨 Mode               : {asset_type.upper()}")
 
     try:
@@ -438,7 +456,19 @@ def main():
         help="Skip Free-Tier Vision QC & Vision SEO metadata (use offline LocalMetadataEngine)"
     )
 
+    # Portfolio Health Report
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Print offline portfolio analytics dashboard (pass rate, MP avg, categories, pending uploads)"
+    )
+
     # Mode and Dry-run
+    parser.add_argument(
+        "--skip-clip",
+        action="store_true",
+        help="Skip OpenCLIP semantic duplicate & keyword relevance audit for faster processing"
+    )
     parser.add_argument(
         "--type", "-t",
         choices=["auto", "isolated", "scene"],
@@ -467,6 +497,13 @@ def main():
     if args.skip_ai_qa:
         config.enable_ai_qa = False
         config.enable_vision_metadata = False
+    if args.skip_clip:
+        config.semantic_audit_enabled = False
+
+    if args.report:
+        print_banner()
+        generate_portfolio_report(config.base_dir, custom_output=config.output_dir, log_callback=print)
+        return
 
     if args.research:
         prompt_count = args.count or config.default_prompt_count
@@ -491,7 +528,11 @@ def main():
         print(f" • Free-Tier Text    : {', '.join(coordinator.qa_auditor.llm.available_text_providers()) or 'NONE (will use offline blueprints)'}")
         print(f" • Free-Tier Vision  : {', '.join(coordinator.qa_auditor.llm.available_vision_providers()) or 'NONE (will use offline LocalMetadataEngine)'}")
         print(f" • Adobe SFTP Upload : {'CONFIGURED ✅' if uploader.is_configured() else 'NOT CONFIGURED (set ADOBE_SFTP_USER & PASS in .env)'} | Transport: {uploader.available_transport()}")
-        print(f" • ExifTool IPTC     : {'OK ✅' if MetadataEngine.has_exiftool() else 'NOT INSTALLED (CSV export still active)'}")
+        xmp_status = "ExifTool (System) ✅" if MetadataEngine.has_exiftool() else "Pure-Python XMP/EXIF Fallback ✅"
+        print(f" • Metadata Embed    : {xmp_status if config.embed_iptc_metadata else 'DISABLED ⚪'}")
+        clip_status = f"OpenCLIP ({config.semantic_model_name}) ✅" if (config.semantic_audit_enabled and SemanticAuditor.packages_installed()) else "DISABLED/UNAVAILABLE ⚪"
+        print(f" • Semantic Audit    : {clip_status}")
+        print(f" • Supersampling Cap : >= {config.skip_upscale_if_above_mp} MP skip upscale | max {config.target_max_megapixels} MP output")
         print(f" • Export Adobe CSV  : {'ENABLED ✅' if config.export_csv else 'DISABLED ⚪'}")
         print(f" • Remove Background : {'ENABLED ✅' if config.remove_bg else 'DISABLED ⚪'}")
         print(f" • Upscayl Binary    : {'OK ✅' if coordinator.upscaler.verify_binary() else 'MISSING ❌'}")

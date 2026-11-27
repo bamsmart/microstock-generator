@@ -525,6 +525,7 @@ def test_incremental_per_file_skip_already_in_result():
     cfg.enable_ai_qa = False
     cfg.enable_vision_metadata = False
     cfg.embed_iptc_metadata = False
+    cfg.semantic_audit_enabled = False
     cfg.export_csv = True
 
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -532,18 +533,20 @@ def test_incremental_per_file_skip_already_in_result():
         raw_dir = batch / "raw"
         raw_dir.mkdir(parents=True)
 
-        # Run 1: 1st raw image (2100x2000 = 4.2 MP)
-        img1 = Image.new("RGB", (2100, 2000), (120, 90, 60))
-        img1.save(raw_dir / "oak_desk_01.jpg", format="JPEG")
+        # Run 1: 1st raw image (2100x2000 = 4.2 MP, left-band pattern)
+        arr1 = np.full((2000, 2100, 3), 210, dtype=np.uint8)
+        arr1[:, :900] = [120, 90, 60]
+        Image.fromarray(arr1, mode="RGB").save(raw_dir / "oak_desk_01.jpg", format="JPEG")
 
         coord = PipelineCoordinator(cfg)
         res1 = coord.process_batch_folder(batch, asset_type="scene")
         assert res1["passed"] == 1
         assert res1["skipped"] == 0
 
-        # Run 2: add 2nd raw image -> 1st must be skipped, only 2nd processed
-        img2 = Image.new("RGB", (2100, 2000), (40, 110, 140))
-        img2.save(raw_dir / "solar_panel_02.jpg", format="JPEG")
+        # Run 2: add perceptually distinct 2nd raw image -> 1st must be skipped, only 2nd processed
+        arr2 = np.full((2000, 2100, 3), 230, dtype=np.uint8)
+        arr2[1100:, 1100:] = [40, 110, 140]
+        Image.fromarray(arr2, mode="RGB").save(raw_dir / "solar_panel_02.jpg", format="JPEG")
 
         res2 = coord.process_batch_folder(batch, asset_type="scene")
         assert res2["skipped"] == 1
@@ -699,6 +702,7 @@ def test_missing_result_asset_mid_run_skips_without_crash():
     cfg.enable_ai_qa = False
     cfg.enable_vision_metadata = False
     cfg.embed_iptc_metadata = False
+    cfg.semantic_audit_enabled = False
     cfg.export_csv = True
 
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -749,6 +753,7 @@ def test_retry_recovers_missing_metadata_and_csv_only():
     cfg.enable_ai_qa = False
     cfg.enable_vision_metadata = False
     cfg.embed_iptc_metadata = False
+    cfg.semantic_audit_enabled = False
     cfg.export_csv = True
 
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -788,6 +793,287 @@ def test_retry_recovers_missing_metadata_and_csv_only():
         csv_text2 = csv_path.read_text(encoding="utf-8-sig")
         assert "desk_02.jpg" in csv_text2
         assert "desk_01.jpg" not in csv_text2
+
+
+def test_fase0_batch_lock_and_filename_collision_and_corrupt_quarantine():
+    from src.pipeline.coordinator import PipelineCoordinator, _BatchLock
+    from src.pipeline.dedup import validate_raw_image_readable
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        batch = base / "lock_batch"
+        raw_dir = batch / "raw"
+        raw_dir.mkdir(parents=True)
+
+        # 1. Corrupt 0-byte file detected by preflight & quarantined in Stage 1
+        bad_file = raw_dir / "corrupt_zero.jpg"
+        bad_file.write_bytes(b"")
+        ok_bad, _ = validate_raw_image_readable(bad_file)
+        assert ok_bad is False
+
+        # Two perceptually distinct files forced to collide on the same sanitized filename
+        arr1 = np.full((2000, 2100, 3), 235, dtype=np.uint8)
+        arr1[100:900, 100:900] = [180, 40, 40]
+        Image.fromarray(arr1, mode="RGB").save(raw_dir / "long_common_subject_prefix_01_alpha.jpg")
+
+        arr2 = np.full((2000, 2100, 3), 235, dtype=np.uint8)
+        arr2[1000:1900, 1000:1900] = [40, 90, 180]
+        Image.fromarray(arr2, mode="RGB").save(raw_dir / "long_common_subject_prefix_01_bravo.jpg")
+
+        # 2. Concurrent lock guard rejects second coordinator while lock is held
+        cfg = load_config()
+        cfg.base_dir = base
+        cfg.skip_upscale = True
+        cfg.remove_bg = False
+        cfg.enable_ai_qa = False
+        cfg.enable_vision_metadata = False
+        cfg.embed_iptc_metadata = False
+        cfg.semantic_audit_enabled = False
+        cfg.generate_qa_contact_sheet = False
+
+        coord = PipelineCoordinator(cfg)
+        with _BatchLock(batch / ".pipeline.lock") as first_lock:
+            assert first_lock.acquired is True
+            locked_res = coord.process_batch_folder(batch, asset_type="scene")
+            assert locked_res.get("locked") is True
+            assert locked_res["passed"] == 0
+
+        # 3. After lock release, corrupt image is moved to rejected_qa/ and both good images keep distinct outputs
+        res = coord.process_batch_folder(batch, asset_type="scene")
+        assert (batch / "rejected_qa" / "corrupt_zero.jpg").exists()
+        assert res["passed"] == 2
+        out_jpgs = sorted((batch / "result").glob("*.jpg"))
+        assert len(out_jpgs) == 2
+        assert out_jpgs[0].name != out_jpgs[1].name
+        assert all(len(p.name) <= 30 for p in out_jpgs)
+
+
+def test_fase0_upscaler_timeout_and_llm_cooldown_recovery():
+    import time
+    from src.pipeline.llm_router import FreeTierLLMRouter
+    from src.pipeline.prompt_history import PromptHistory
+    from src.pipeline.upscaler import UpscaylEngine
+
+    # 1. Circuit breaker cooldown & half-open recovery vs permanent error
+    router = FreeTierLLMRouter(min_delay_sec=0, timeout_sec=5)
+    router.transient_cooldown_sec = 0.05
+    router.gemini_key = "dummy_key_g"
+    router.mistral_key = "dummy_key_m"
+
+    router._record_failure("gemini", "timed out")
+    assert "gemini" in router.available_vision_providers()
+    router._record_failure("gemini", "timed out")
+    assert "gemini" not in router.available_vision_providers()
+    time.sleep(0.08)
+    assert "gemini" in router.available_vision_providers()  # recovered after cooldown
+
+    router._record_failure("mistral", "401 unauthorized")
+    assert "mistral" not in router.available_vision_providers()
+
+    # 2. Upscayl watchdog timeout kills hung subprocess cleanly
+    cfg = load_config()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir)
+        fake_bin = tmp / "fake_upscayl.py"
+        fake_bin.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+        # Create an executable shell wrapper so subprocess.Popen runs python sleep script
+        wrapper = tmp / "fake_upscayl.sh"
+        wrapper.write_text("#!/bin/sh\n/usr/bin/python3 -c 'import time; time.sleep(30)'\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        models_dir = tmp / "models"
+        models_dir.mkdir()
+        in_dir = tmp / "in"
+        out_dir = tmp / "out"
+        in_dir.mkdir()
+        out_dir.mkdir()
+        Image.new("RGB", (10, 10)).save(in_dir / "a.png")
+
+        engine = UpscaylEngine(cfg)
+        engine.bin_path = wrapper
+        engine.models_dir = models_dir
+        ok = engine.upscale_folder(in_dir, out_dir, timeout_sec=1, log_callback=lambda *_: None)
+        assert ok is False
+
+        # 3. PromptHistory atomic save leaves no leftover .tmp
+        hist_path = tmp / "prompt_history.json"
+        hist = PromptHistory(hist_path)
+        hist.add(hist.make_entry("ceramic vase", "interior", "ceramic vase studio", "isolated", variant_key="vase_01"))
+        hist.save()
+        assert hist_path.exists()
+        assert not hist_path.with_suffix(".tmp").exists()
+
+
+def test_fase1_supersampling_and_pymatting_and_fase2_iqa_and_contact_sheet():
+    import cv2
+    from src.pipeline.postprocess import downsample_to_target_mp, recover_foreground_pymatting
+    from src.pipeline.qa_preview import generate_qa_contact_sheet
+
+    # 1. Supersampling shrinks 40 MP to ~20 MP and leaves 10 MP untouched
+    big = Image.new("RGB", (8000, 5000), (100, 120, 140))  # 40 MP
+    capped, did_cap = downsample_to_target_mp(big, target_max_mp=20.0)
+    assert did_cap is True
+    w, h = capped.size
+    assert 19.5 <= (w * h) / 1_000_000.0 <= 20.5
+    assert abs((w / h) - (8000 / 5000)) < 0.02
+
+    normal = Image.new("RGB", (4000, 2500), (100, 120, 140))  # 10 MP
+    same, did_cap2 = downsample_to_target_mp(normal, target_max_mp=20.0)
+    assert did_cap2 is False
+    assert same.size == (4000, 2500)
+
+    # 2. PyMatting foreground recovery on synthetic cutout preserves dtype & removes white rim
+    rgb = np.full((120, 120, 3), 255, dtype=np.uint8)
+    rgb[20:100, 20:100] = [160, 40, 40]
+    alpha = np.zeros((120, 120), dtype=np.uint8)
+    alpha[20:100, 20:100] = 255
+    alpha[18:20, 20:100] = 128  # white-contaminated semi-transparent border
+    recovered = recover_foreground_pymatting(rgb, alpha)
+    assert recovered.shape == rgb.shape
+    assert recovered.dtype == np.uint8
+
+    # 3. Scientific IQA (blur_effect, noise_sigma, halo_score) + Dark QA Contact Sheet
+    cfg = load_config()
+    val = TechnicalValidator(cfg)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir)
+        res_dir = tmp / "result"
+        res_dir.mkdir()
+
+        # Sharp textured RGB vs Gaussian blurred version
+        rng = np.random.default_rng(42)
+        sharp_arr = np.zeros((2000, 2100, 3), dtype=np.uint8)
+        sharp_arr[::16, :, :] = 220
+        sharp_arr[:, ::16, 1] = 200
+        sharp_path = res_dir / "sharp_scene.jpg"
+        Image.fromarray(sharp_arr, mode="RGB").save(sharp_path, format="JPEG", quality=95)
+
+        blur_arr = cv2.GaussianBlur(sharp_arr, (31, 31), sigmaX=9.0)
+        blur_path = res_dir / "blur_scene.jpg"
+        Image.fromarray(blur_arr, mode="RGB").save(blur_path, format="JPEG", quality=95)
+
+        noisy_arr = np.clip(sharp_arr.astype(np.int16) + rng.integers(-45, 45, sharp_arr.shape), 0, 255).astype(np.uint8)
+        noisy_path = res_dir / "noisy_scene.jpg"
+        Image.fromarray(noisy_arr, mode="RGB").save(noisy_path, format="JPEG", quality=95)
+
+        v_sharp = val.validate_asset(sharp_path, asset_type="scene")
+        v_blur = val.validate_asset(blur_path, asset_type="scene")
+        v_noisy = val.validate_asset(noisy_path, asset_type="scene")
+        assert v_sharp["stats"]["blur_effect"] < v_blur["stats"]["blur_effect"]
+        assert v_noisy["stats"]["noise_sigma"] > v_sharp["stats"]["noise_sigma"]
+
+        # Halo detector on dark subject with bright fringe vs clean red fringe
+        halo_png = res_dir / "halo_item.png"
+        rgba_halo = np.zeros((2000, 2100, 4), dtype=np.uint8)
+        rgba_halo[300:1700, 300:1800] = [40, 20, 20, 255]
+        rgba_halo[295:300, 300:1800] = [250, 250, 250, 128]  # strong white rim
+        Image.fromarray(rgba_halo, mode="RGBA").save(halo_png, format="PNG")
+        v_halo = val.validate_asset(halo_png, asset_type="isolated")
+        assert v_halo["stats"]["halo_score"] > 0.28
+
+        # Dark-canvas QA contact sheet saved outside result/
+        sheet = generate_qa_contact_sheet(
+            res_dir,
+            validation_map={
+                sharp_path.name: v_sharp,
+                halo_png.name: v_halo,
+            },
+            output_path=tmp / "qa_contact_sheet.jpg",
+        )
+        assert sheet is not None and sheet.exists()
+        assert not (res_dir / "qa_contact_sheet.jpg").exists()
+
+
+def test_fase3_and_fase4_portfolio_xmp_report_and_semantic():
+    from src.pipeline.analytics import generate_portfolio_report
+    from src.pipeline.dedup import PortfolioIndex
+    from src.pipeline.manifest import ManifestManager, calculate_file_hash
+    from src.pipeline.metadata import MetadataEngine
+    from src.pipeline.semantic_audit import SemanticAuditor
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        batch = base / "batch_01"
+        res_dir = batch / "result"
+        res_dir.mkdir(parents=True)
+
+        # 1. Pure-Python XMP/EXIF embedding into JPEG & PNG without corrupting image
+        jpg_path = res_dir / "sunset_beach.jpg"
+        Image.new("RGB", (2100, 2000), (220, 140, 90)).save(jpg_path, format="JPEG", quality=95)
+        ok_j, meth_j = MetadataEngine.embed_metadata(jpg_path, "Minimalist Warm Sunset Desk", ["sunset", "minimal", "desk"])
+        assert ok_j is True
+        assert meth_j in ("exiftool", "python_xmp_exif")
+        assert b"Minimalist Warm Sunset Desk" in jpg_path.read_bytes()
+
+        png_path = res_dir / "red_mug_iso.png"
+        Image.new("RGBA", (2100, 2000), (180, 40, 40, 255)).save(png_path, format="PNG")
+        ok_p, meth_p = MetadataEngine.embed_metadata(png_path, "Ceramic Red Coffee Mug Cutout", ["coffee", "mug", "ceramic"])
+        assert ok_p is True
+        assert meth_p in ("exiftool", "python_xmp_png")
+        with Image.open(png_path) as chk_p:
+            assert chk_p.mode == "RGBA"
+
+        # 2. PortfolioIndex cross-batch duplicate + keyword Jaccard overlap > 65%
+        idx = PortfolioIndex(base / ".portfolio_index.json")
+        kws_a = ["coffee", "mug", "ceramic", "minimal", "studio", "isolated", "white", "breakfast", "morning", "drink"]
+        idx.record_asset("mug_a.png", "batch_00", phash="ff00ff00ff00ff00", keywords=kws_a, clip_vec=[1.0, 0.0, 0.0])
+        idx.save()
+
+        reloaded = PortfolioIndex(base / ".portfolio_index.json")
+        sim_ph = reloaded.find_similar_phash("ff00ff00ff00ff01", threshold=6)
+        assert sim_ph is not None and sim_ph[1] == 1
+        kw_ov = reloaded.find_keyword_overlap(kws_a[:9] + ["tea"], threshold=0.65)
+        assert kw_ov is not None and kw_ov[1] >= 0.8
+
+        # 3. Portfolio analytics report aggregates manifests accurately
+        man = ManifestManager(res_dir / "manifest.json")
+        man.record_asset(calculate_file_hash(jpg_path), "sunset_raw", jpg_path.name, "scene", (2100, 2000), 4.2, 1.1, "sunset", "Title 1", kws_a, 8)
+        man.record_asset(calculate_file_hash(png_path), "mug_raw", png_path.name, "isolated", (2100, 2000), 4.2, 2.3, "mug", "Title 2", kws_a, 8)
+        report = generate_portfolio_report(base, log_callback=lambda *_: None)
+        assert report["total_ready"] == 2
+        assert report["isolated_png"] == 1
+        assert report["scene_jpeg"] == 1
+        assert report["pending_upload"] == 2
+
+        # 4. Fase 4 SemanticAuditor cosine similarity & graceful disabled mode
+        assert SemanticAuditor.cosine_similarity([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]) > 0.99
+        auditor = SemanticAuditor(enabled=False)
+        assert auditor.embed_image(jpg_path) is None
+        dup = auditor.find_semantic_duplicate([0.99, 0.14, 0.0], reloaded.entries, threshold=0.92)
+        assert dup is not None
+
+
+def test_step1_to_step3_root_launchers_valid():
+    import os
+    import subprocess
+    from src.pipeline.config import PROJECT_ROOT
+
+    expected = [
+        "Step1_Research_Prompts.command",
+        "Step2_Process_And_Metadata.command",
+        "Step3_Upload_SFTP.command",
+    ]
+    for name in expected:
+        p = PROJECT_ROOT / name
+        assert p.is_file(), f"Missing launcher in codebase root: {name}"
+        assert os.access(p, os.X_OK), f"Launcher not executable: {name}"
+        chk = subprocess.run(["bash", "-n", str(p)], capture_output=True, text=True)
+        assert chk.returncode == 0, f"Syntax error in {name}: {chk.stderr}"
+
+    obsolete = [
+        "Run_Step1_Research.command",
+        "Run_Microstock_Generator.command",
+        "Run_Step5_Upload.command",
+        "Run_Upscayl.command",
+        "upscayl_auto.sh",
+        "Step2_Open_Raw_Folder.command",
+        "Step3_Process_And_Metadata.command",
+        "Step4_QA_Report_And_Preview.command",
+        "Step5_Upload_SFTP.command",
+    ]
+    for old_name in obsolete:
+        assert not (PROJECT_ROOT / old_name).exists(), f"Obsolete launcher still exists: {old_name}"
+
 
 
 

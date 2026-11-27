@@ -8,7 +8,7 @@
 
 A **$0 / Free-Tier Hybrid Microstock Automation Pipeline** that covers **high-demand seasonal research**, **commercial-grade prompt generation**, **Free-Tier Vision QC & ultra-specific Adobe Stock SEO metadata**, **4x AI super-resolution**, **anti-halo transparent cutouts**, **CSV/IPTC export**, **plain-text `.txt` run logs**, and **optional SFTP upload** for **Adobe Stock, Shutterstock, Freepik, Getty Images / iStock**, and more.
 
-> 💡 **1-Click Hybrid Workflow:** Double-click `Run_Step1_Research.command` to get copy-paste commercial prompts → generate & drop images into `raw/` → double-click `Run_Microstock_Generator.command` for production-ready assets + `adobe_stock_metadata.csv` → upload via Drag & Drop + `Upload CSV` (or `Run_Step5_Upload.command` via SFTP).
+> 💡 **1-Click Hybrid Workflow (3 Launchers):** Double-click `Step1_Research_Prompts.command` to get copy-paste commercial prompts → generate & drop images into `<batch>/raw/` → double-click `Step2_Process_And_Metadata.command` for production-ready assets + `adobe_stock_metadata.csv` + auto-opened `qa_contact_sheet.jpg` → upload via Drag & Drop + `Upload CSV` (or `Step3_Upload_SFTP.command` when SFTP is unlocked). Offline analytics anytime: `./run.sh --report`.
 
 ---
 
@@ -33,9 +33,10 @@ A **$0 / Free-Tier Hybrid Microstock Automation Pipeline** that covers **high-de
 - 🧠 **Free-Tier Cloud AI Router ($0, Zero Credit Card):** Automatically routes text & vision tasks across free-tier providers with built-in RPM throttling, `certifi` SSL support (fixes macOS Python SSL errors), and automatic fallback (**Groq `openai/gpt-oss-120b` → `openai/gpt-oss-20b` → Gemini `gemini-3.8-flash` → Mistral → OpenRouter `:free`**), plus deterministic offline fallbacks when no API key is configured.
 - ♻️ **Per-File Incremental Processing:** Tracks raw SHA-256 hashes in `result/manifest.json` so adding new images to an existing `raw/` folder only processes the **new** files, skips already-processed assets (saving Vision quota & GPU time), and appends cleanly to `adobe_stock_metadata.csv`.
 - 🔍 **Single-Call Vision QC + Page-1 Adobe Stock SEO:** Audits raw AI images at 100% detail **before** upscaling (rejecting halos, messy shadows, pixel gaps, soft focus, plastic artifacts, bad hands, garbled text into `rejected_ai_qa/`) while simultaneously generating ultra-specific Titles (≤ 70 chars, no commas), 3-tier ranked Keywords (35–45, blocking generic filler spam), Category IDs (1–21), and SEO Filenames (≤ 30 chars).
-- ✂️ **True Anti-Halo Cutouts + Pixel-Gap Sealing:** Combines BiRefNet-Lite segmentation, edge-aware Guided Filtering, Color-Projection Matting, interior pinhole sealing (`fill_interior_pinholes` to eliminate *celah pixel*), mathematical white-matte un-premultiplication, and embedded **sRGB IEC61966-2.1** ICC profiles on both transparent PNGs and JPEGs.
-- ⚡ **AI Super-Resolution:** Integrates with local Upscayl 4x models (`ultramix-balanced-4x` for isolated, `high-fidelity-4x` for scenes) to guarantee 4 MP – 100 MP microstock standards.
-- 🏷️ **Adobe Stock CSV + IPTC/XMP + `.txt` Logs:** Exports official `adobe_stock_metadata.csv` (UTF-8), embeds IPTC/XMP metadata via ExifTool (when installed), tracks SHA-256 history in `manifest.json`, and writes human-readable run reports to `logs/run_*.txt`.
+- ✂️ **True Anti-Halo Cutouts + Pixel-Gap Sealing:** Combines BiRefNet-Lite segmentation, edge-aware Guided Filtering, Color-Projection Matting, **PyMatting Multi-Level Foreground Recovery (`estimate_foreground_ml`, MIT)**, interior pinhole sealing (`fill_interior_pinholes` to eliminate *celah pixel*), mathematical white-matte un-premultiplication, and embedded **sRGB IEC61966-2.1** ICC profiles on both transparent PNGs and JPEGs.
+- ⚡ **Smart Adaptive Super-Resolution (16–20 MP Sweet Spot):** Integrates with local Upscayl 4x models (`ultramix-balanced-4x` / `high-fidelity-4x`) with a **hard watchdog timeout**, skips unnecessary upscaling when raw inputs are already `>= 12 MP`, and applies **Lanczos supersampling (`<= 20 MP`)** for razor-sharp 100% zoom and ~75% lower RAM usage.
+- 🔬 **Scientific IQA + Dark-Canvas QA Sheet:** Evaluates every asset using `scikit-image` resolution-invariant blur (`blur_effect`), wavelet noise (`estimate_sigma`), and an isolated cutout **Halo Rim Detector**, plus exports `<batch>/qa_contact_sheet.jpg` over a charcoal `#181818` checkerboard for 10-second visual inspection (outside `result/`).
+- 🛡️ **Portfolio Guard, Lossless Pure-Python XMP/EXIF & `--report`:** Prevents cross-batch *"Similar Content"* bans via `.portfolio_index.json` (pHash + Keyword Overlap Audit `<= 65%` + optional **OpenCLIP ViT-B-32** semantic audit), embeds Adobe Stock **XMP/EXIF** natively in pure Python even when ExifTool is absent (`adobe_stock_metadata.csv` + inline XMP), and provides `--report` offline portfolio analytics.
 - 📤 **Step 5 — Optional SFTP Upload & Daily Scheduler:** Supports `sftp.contributor.adobestock.com` (Paramiko or system `curl` SFTP fallback) with anti-duplicate upload tracking and optional macOS `launchd` nightly scheduling.
 
 ---
@@ -44,16 +45,16 @@ A **$0 / Free-Tier Hybrid Microstock Automation Pipeline** that covers **high-de
 
 ```mermaid
 flowchart TD
-    S1["Step 1: Run_Step1_Research.command<br>H-90..H-120 (3-4 Mo Ahead) + 120d Anti-Repeat"] --> P1["~/Desktop/microstock_generator/prompts/<br>prompts_*.txt (Copy-Paste + Negative + Filename)"]
-    P1 --> S2["Step 2 & 3 (Manual Hybrid)<br>Generate images & save to <batch>/raw/"]
-    S2 --> B["[1/5] pHash Deduplication<br>Filters similar frames -> rejected_similar/"]
+    S1["Step 1: Step1_Research_Prompts.command<br>H-90..H-120 (3-4 Mo Ahead) + 120d Anti-Repeat"] --> P1["~/Desktop/microstock_generator/prompts/<br>prompts_*.txt (Copy-Paste + Negative + Filename)"]
+    P1 --> S2["Manual Generate & Save<br>Generate images in AI tool & save into <batch>/raw/"]
+    S2 --> B["[1/5] Corrupt Preflight + pHash & Portfolio Dedup<br>Filters similar frames -> rejected_similar/"]
     B --> V["[2/5] Free-Tier Vision QC + SEO Metadata<br>Gemini Flash / OpenRouter :free<br>Defective AI -> rejected_ai_qa/"]
-    V --> U["[3/5] Upscayl 4x Super-Resolution<br>Isolated (Ultramix) vs Scene (High-Fidelity)"]
-    U --> PP["[4/5] High-Precision Post-Processing<br>Anti-Halo Transparent PNG / sRGB 95% JPEG"]
-    PP --> QA["[5/5] Technical QA + ExifTool IPTC + CSV<br>4-100 MP, <= 45 MB, <= 30 char filename"]
-    QA -->|"PASSED ✅"| RES["result/<br>Images + adobe_stock_metadata.csv + manifest.json"]
+    V --> U["[3/5] Smart Adaptive Upscayl 4x<br>Skips >= 12 MP | Supersampling <= 20 MP"]
+    U --> PP["[4/5] High-Precision Post-Processing<br>PyMatting Anti-Halo PNG / sRGB 95% JPEG"]
+    PP --> QA["[5/5] Scientific IQA + XMP/EXIF + CSV<br>4-100 MP, <= 45 MB, <= 30 char filename"]
+    QA -->|"PASSED ✅"| RES["Step 2 Output (result/ + qa_contact_sheet.jpg)<br>Production assets + CSV + Dark-Canvas QA Sheet"]
     QA -->|"FAILED ❌"| REJ["rejected_qa/"]
-    RES --> UP["Step 5: Upload to Adobe Stock<br>Drag & Drop + Upload CSV (or SFTP via Run_Step5_Upload.command)"]
+    RES --> UP["Upload to Adobe Stock<br>Manual Drag & Drop + CSV (or Step3_Upload_SFTP.command)"]
     UP --> LOG["logs/run_*.txt<br>Plain-text summary report"]
 ```
 
@@ -66,13 +67,16 @@ flowchart TD
 2. **Upscayl** (free local 4x upscaler): Download from [upscayl.org](https://www.upscayl.org/) or `brew install --cask upscayl`.
 3. *(Optional)* **ExifTool** for inline IPTC/XMP embedding: `brew install exiftool`.
 
-### 1-Click Launchers (macOS)
+### 1-Click Launchers (Codebase Root & Desktop)
 
 | Step | 1-Click Launcher | What It Does |
 |---|---|---|
-| **Step 1** | `Run_Step1_Research.command` | Runs high-demand research, saves `prompts_*.txt` to `~/Desktop/microstock_generator/prompts/`, and opens it automatically for copy-paste. |
-| **Step 4** | `Run_Microstock_Generator.command` | Processes all `<batch>/raw/` folders (Dedup → Vision QC & SEO → Upscayl 4x → Anti-Halo/sRGB → `adobe_stock_metadata.csv` + `.txt` log) with `caffeinate -i` sleep prevention. |
-| **Step 5** | `Run_Step5_Upload.command` | Uploads pending `result/` assets to Adobe Stock SFTP (for qualified SFTP accounts) with anti-duplicate tracking. |
+| **Step 1** | `Step1_Research_Prompts.command` | Runs high-demand research, saves `prompts_*.txt` to `~/Desktop/microstock_generator/prompts/`, and opens it automatically for copy-paste. |
+| *(Manual)* | *Generate & Save Raw* | Copy prompts into your AI generator and save raw PNG/JPG images into `<batch>/raw/`. |
+| **Step 2** | `Step2_Process_And_Metadata.command` | Processes all `<batch>/raw/` folders (Dedup → Vision QC & SEO → Smart Upscayl → PyMatting Anti-Halo/sRGB → Scientific IQA → XMP + CSV + Dark QA Sheet + `.txt` log) with `caffeinate -i`, then opens `qa_contact_sheet.jpg`. |
+| **Step 3** | `Step3_Upload_SFTP.command` | *(Optional)* Uploads pending `result/` assets to Adobe Stock SFTP (when SFTP is unlocked); otherwise upload via browser Drag & Drop + `Upload CSV`. |
+
+> 💡 Run offline portfolio analytics anytime via CLI: `./run.sh --report`
 
 > 🪟 **Windows / Linux:** Use `run.bat` (Windows) or `./run.sh` (Linux/macOS). Launchers auto-create and self-heal `.venv`, and Desktop `.command` shortcuts automatically stay in sync with the repository.
 
@@ -99,9 +103,9 @@ Without API keys, Step 1 uses the curated H-90..H-120 offline commercial library
 
 ```text
 ~/Desktop/microstock_generator/
-├── Step1_Research_Prompts.command      # Auto-generated 1-click Step 1 shortcut (macOS)
-├── Step2_Process_And_Metadata.command  # Auto-generated 1-click Process + QC + SEO + CSV shortcut
-├── Step3_Upload_SFTP.command           # Auto-generated 1-click SFTP Upload shortcut
+├── Step1_Research_Prompts.command      # Auto-synced Step 1 shortcut (macOS)
+├── Step2_Process_And_Metadata.command  # Auto-synced Step 2 Process + QC + SEO + CSV shortcut
+├── Step3_Upload_SFTP.command           # Auto-synced Step 3 SFTP Upload shortcut (optional)
 ├── prompts/
 │   ├── prompts_YYYY-MM-DD_HHMMSS.txt   # Copy-paste ready prompts + Suggested File
 │   └── prompts_YYYY-MM-DD_HHMMSS.json  # Structured backup
@@ -237,7 +241,7 @@ upload:
 <summary><b>1. macOS Gatekeeper blocks double-clicking .command files</b></summary>
 <br>
 Right-click the <code>.command</code> file → <b>Open</b> on first run, or run:
-<pre>chmod +x Run_Step1_Research.command Run_Microstock_Generator.command Run_Step5_Upload.command run.sh</pre>
+<pre>chmod +x Step1_Research_Prompts.command Step2_Process_And_Metadata.command Step3_Upload_SFTP.command run.sh</pre>
 </details>
 
 <details>
@@ -249,8 +253,8 @@ Adobe Stock only unlocks SFTP for qualified accounts with established approval h
 <details>
 <summary><b>3. How do I add new images to an existing batch or force a full re-process?</b></summary>
 <br>
-<b>Adding new images:</b> Just drop new raw files into <code>&lt;batch&gt;/raw/</code> and double-click <code>Run_Microstock_Generator.command</code>. Already-processed files are automatically skipped (via SHA-256 <code>raw_hash</code> in <code>result/manifest.json</code>), and only the new files are processed and appended to <code>adobe_stock_metadata.csv</code>.<br><br>
-<b>Full re-process from scratch:</b> Delete or rename the existing <code>result/</code> folder inside that batch and re-run <code>Run_Microstock_Generator.command</code>.
+<b>Adding new images:</b> Just drop new raw files into <code>&lt;batch&gt;/raw/</code> and double-click <code>Step2_Process_And_Metadata.command</code>. Already-processed files are automatically skipped (via SHA-256 <code>raw_hash</code> in <code>result/manifest.json</code>), and only the new files are processed and appended to <code>adobe_stock_metadata.csv</code>.<br><br>
+<b>Full re-process from scratch:</b> Delete or rename the existing <code>result/</code> folder inside that batch and re-run <code>Step2_Process_And_Metadata.command</code>.
 </details>
 
 ---

@@ -8,6 +8,7 @@ import sys
 import time
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -177,9 +178,10 @@ class UpscaylEngine:
         output_folder: Path,
         model_name: Optional[str] = None,
         scale: Optional[int] = None,
+        timeout_sec: Optional[int] = None,
         log_callback=print
     ) -> bool:
-        """Upscale all supported images in input_folder to output_folder."""
+        """Upscale all supported images in input_folder to output_folder with a hard watchdog timeout."""
         if not self.verify_binary():
             log_callback(
                 f"❌ Upscayl binary or models dir missing:\n"
@@ -193,6 +195,11 @@ class UpscaylEngine:
         scale = scale or self.config.upscale_scale
         model_name = model_name or self.config.model_fallback
 
+        if timeout_sec is None:
+            per_img = int(getattr(self.config, "upscale_timeout_per_image_sec", 120))
+            in_count = len([p for p in Path(input_folder).iterdir() if p.is_file()]) if Path(input_folder).exists() else 1
+            timeout_sec = min(1800, max(180, max(1, in_count) * per_img))
+
         cmd = [
             str(self.bin_path),
             "-i", str(input_folder),
@@ -204,6 +211,9 @@ class UpscaylEngine:
         ]
 
         start_time = time.time()
+        timed_out = threading.Event()
+        process = None
+        timer = None
         try:
             process = subprocess.Popen(
                 cmd,
@@ -212,6 +222,19 @@ class UpscaylEngine:
                 text=True,
                 bufsize=1
             )
+
+            def _on_timeout():
+                timed_out.set()
+                try:
+                    if process and process.poll() is None:
+                        process.kill()
+                except Exception:
+                    pass
+
+            if timeout_sec and timeout_sec > 0:
+                timer = threading.Timer(float(timeout_sec), _on_timeout)
+                timer.daemon = True
+                timer.start()
 
             completed = 0
             if process.stdout is not None:
@@ -225,6 +248,9 @@ class UpscaylEngine:
 
             process.wait()
             elapsed = time.time() - start_time
+            if timed_out.is_set():
+                log_callback(f"⏱️ Upscayl timed out after {timeout_sec}s — terminated hung subprocess.")
+                return False
             if process.returncode == 0:
                 log_callback(f"✨ Upscaling finished in {elapsed:.1f}s (Exit 0).")
                 return True
@@ -235,6 +261,15 @@ class UpscaylEngine:
         except Exception as e:
             log_callback(f"❌ Subprocess error while running Upscayl: {e}")
             return False
+        finally:
+            if timer is not None:
+                timer.cancel()
+            if process is not None and process.poll() is None:
+                try:
+                    process.kill()
+                    process.wait(timeout=5)
+                except Exception:
+                    pass
 
     def upscale_single_image(
         self,
@@ -246,29 +281,28 @@ class UpscaylEngine:
     ) -> bool:
         """Upscale a single image (used e.g. for re-upscaling tight-cropped images under 4 MP)."""
         temp_dir = input_image.parent / f"_temp_single_{input_image.stem}"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        import shutil
-        temp_input_dir = temp_dir / "in"
-        temp_input_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(input_image, temp_input_dir / input_image.name)
+        try:
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            temp_input_dir = temp_dir / "in"
+            temp_input_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(input_image, temp_input_dir / input_image.name)
 
-        temp_out_dir = temp_dir / "out"
-        temp_out_dir.mkdir(parents=True, exist_ok=True)
+            temp_out_dir = temp_dir / "out"
+            temp_out_dir.mkdir(parents=True, exist_ok=True)
 
-        ok = self.upscale_folder(
-            temp_input_dir,
-            temp_out_dir,
-            model_name=model_name or self.config.model_isolated,
-            scale=scale,
-            log_callback=log_callback
-        )
+            ok = self.upscale_folder(
+                temp_input_dir,
+                temp_out_dir,
+                model_name=model_name or self.config.model_isolated,
+                scale=scale,
+                log_callback=log_callback
+            )
 
-        if ok:
-            generated = list(temp_out_dir.glob("*.png")) + list(temp_out_dir.glob("*.jpg"))
-            if generated:
-                shutil.move(generated[0], output_image)
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                return True
-
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        return False
+            if ok:
+                generated = list(temp_out_dir.glob("*.png")) + list(temp_out_dir.glob("*.jpg"))
+                if generated:
+                    shutil.move(generated[0], output_image)
+                    return True
+            return False
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)

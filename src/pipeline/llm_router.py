@@ -6,7 +6,7 @@ Text Chain (Research & Prompt Engineering):
   1. Groq Free Tier (openai/gpt-oss-120b -> fallback openai/gpt-oss-20b)
   2. Google AI Studio Gemini Free Tier (gemini-3.8-flash)
   3. Mistral AI Experiment Free Tier (mistral-small-latest)
-  4. OpenRouter :free (meta-llama/llama-3.3-70b-instruct:free)
+  4. OpenRouter Free Auto-Router (openrouter/free)
 
 Vision Chain (Step 4 QC + Adobe Stock SEO Metadata in 1 single API call):
   1. Google AI Studio Gemini Free Tier (gemini-3.8-flash, with 1 retry on transient 503)
@@ -85,9 +85,11 @@ class FreeTierLLMRouter:
         self.timeout_sec = timeout_sec
         self._last_call_ts: float = 0.0
         self._ssl_ctx = build_ssl_context()
-        # Circuit breaker: skip dead/exhausted providers for the rest of the run
+        # Circuit breaker: permanent disables vs transient 60s half-open cooldown
         self._disabled_providers: Dict[str, str] = {}
+        self._cooldown_until: Dict[str, float] = {}
         self._consecutive_failures: Dict[str, int] = {}
+        self.transient_cooldown_sec: float = 60.0
 
     def _is_permanent_or_quota_error(self, err_msg: str) -> bool:
         low = err_msg.lower()
@@ -98,8 +100,21 @@ class FreeTierLLMRouter:
         )
         return any(t in low for t in triggers)
 
+    def _is_provider_available(self, provider: str) -> bool:
+        if provider in self._disabled_providers:
+            return False
+        until = self._cooldown_until.get(provider)
+        if until is not None:
+            if time.monotonic() < until:
+                return False
+            # Half-open cooldown expired -> allow provider to recover
+            self._cooldown_until.pop(provider, None)
+            self._consecutive_failures[provider] = 0
+        return True
+
     def _record_success(self, provider: str):
         self._consecutive_failures[provider] = 0
+        self._cooldown_until.pop(provider, None)
 
     def _record_failure(self, provider: str, err_msg: str, log_callback=None):
         low = err_msg.lower()
@@ -107,32 +122,39 @@ class FreeTierLLMRouter:
         is_transient_503 = "503" in low or "unavailable" in low or "high demand" in low
         count = self._consecutive_failures.get(provider, 0) + 1
         self._consecutive_failures[provider] = count
-        threshold = 4 if is_transient_503 else 2
-        if self._is_permanent_or_quota_error(err_msg) or count >= threshold:
-            reason = "quota/auth/model error" if self._is_permanent_or_quota_error(err_msg) else f"{count} consecutive errors"
-            self._disabled_providers[provider] = reason
+        if self._is_permanent_or_quota_error(err_msg):
+            self._disabled_providers[provider] = "quota/auth/model error"
             if log_callback:
-                log_callback(f"     ⚡ Circuit breaker: disabling '{provider}' for rest of run ({reason}).")
+                log_callback(f"     ⚡ Circuit breaker: disabling '{provider}' for rest of run (quota/auth/model error).")
+            return
+        threshold = 4 if is_transient_503 else 2
+        if count >= threshold:
+            self._cooldown_until[provider] = time.monotonic() + self.transient_cooldown_sec
+            if log_callback:
+                log_callback(
+                    f"     ⚡ Circuit breaker: cooling down '{provider}' for {int(self.transient_cooldown_sec)}s "
+                    f"({count} consecutive transient errors)."
+                )
 
     def available_text_providers(self) -> List[str]:
         providers: List[str] = []
-        if self.groq_key and "groq" not in self._disabled_providers:
+        if self.groq_key and self._is_provider_available("groq"):
             providers.append("groq")
-        if self.gemini_key and "gemini" not in self._disabled_providers:
+        if self.gemini_key and self._is_provider_available("gemini"):
             providers.append("gemini")
-        if self.mistral_key and "mistral" not in self._disabled_providers:
+        if self.mistral_key and self._is_provider_available("mistral"):
             providers.append("mistral")
-        if self.openrouter_key and "openrouter" not in self._disabled_providers:
+        if self.openrouter_key and self._is_provider_available("openrouter"):
             providers.append("openrouter")
         return providers
 
     def available_vision_providers(self) -> List[str]:
         providers: List[str] = []
-        if self.gemini_key and "gemini" not in self._disabled_providers:
+        if self.gemini_key and self._is_provider_available("gemini"):
             providers.append("gemini")
-        if self.mistral_key and "mistral" not in self._disabled_providers:
+        if self.mistral_key and self._is_provider_available("mistral"):
             providers.append("mistral")
-        if self.openrouter_key and "openrouter" not in self._disabled_providers:
+        if self.openrouter_key and self._is_provider_available("openrouter"):
             providers.append("openrouter")
         return providers
 
@@ -321,12 +343,26 @@ class FreeTierLLMRouter:
                     if raw is None:
                         raise last_groq_err or RuntimeError("Groq models unavailable")
                 elif provider == "gemini":
-                    raw = self._call_gemini(
-                        system_prompt=system_prompt,
-                        user_text=user_prompt,
-                        image_bytes=None,
-                        expect_json=True,
-                    )
+                    try:
+                        raw = self._call_gemini(
+                            system_prompt=system_prompt,
+                            user_text=user_prompt,
+                            image_bytes=None,
+                            expect_json=True,
+                        )
+                    except Exception as ge:
+                        if "503" in str(ge) or "UNAVAILABLE" in str(ge):
+                            if log_callback:
+                                log_callback("     ⏳ Gemini text 503 spike — retrying once in 4s...")
+                            time.sleep(4.0)
+                            raw = self._call_gemini(
+                                system_prompt=system_prompt,
+                                user_text=user_prompt,
+                                image_bytes=None,
+                                expect_json=True,
+                            )
+                        else:
+                            raise
                 elif provider == "mistral":
                     raw = self._call_openai_compat(
                         "https://api.mistral.ai/v1/chat/completions",
@@ -349,7 +385,12 @@ class FreeTierLLMRouter:
                 else:
                     continue
 
-                parsed = json.loads(_extract_json_block(raw))
+                try:
+                    parsed = json.loads(_extract_json_block(raw))
+                except json.JSONDecodeError as je:
+                    if log_callback:
+                        log_callback(f"     ⚠️ '{provider}' returned invalid JSON ({je}). Trying next fallback without disabling provider...")
+                    continue
                 self._record_success(provider)
                 if log_callback:
                     log_callback(f"     ↳ Response from '{provider}' in {time.monotonic() - t0:.1f}s ✅")
@@ -463,7 +504,12 @@ class FreeTierLLMRouter:
                 else:
                     continue
 
-                parsed = json.loads(_extract_json_block(raw))
+                try:
+                    parsed = json.loads(_extract_json_block(raw))
+                except json.JSONDecodeError as je:
+                    if log_callback:
+                        log_callback(f"     ⚠️ Vision '{provider}' returned invalid JSON ({je}). Trying next fallback without disabling provider...")
+                    continue
                 self._record_success(provider)
                 if log_callback:
                     log_callback(f"     ↳ Vision response from '{provider}' in {time.monotonic() - t0:.1f}s ✅")

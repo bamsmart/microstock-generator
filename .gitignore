@@ -42,3 +42,9 @@ output/
 *_rejected_similar/
 *_temp_*/
 cutouts/
+
+# Runtime locks, caches, portfolio index, & QA preview sheets
+.pipeline.lock
+.pipeline_cache.json
+.portfolio_index.json
+qa_contact_sheet.jpg

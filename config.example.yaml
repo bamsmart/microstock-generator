@@ -28,6 +28,9 @@ generation:
 upscaling:
   scale: 4
   skip_upscale: false
+  skip_upscale_if_above_mp: 12.0
+  target_max_megapixels: 20.0
+  upscale_timeout_per_image_sec: 120
   models:
     isolated: "ultramix-balanced-4x"
     scene: "high-fidelity-4x"
@@ -45,6 +48,7 @@ segmentation:
   cleanup_stray_pixels: true
   stray_pixel_min_area: 50
   color_decontaminate: true
+  use_pymatting_foreground: true
   tight_crop: true
   tight_crop_margin_pct: 0.03
   auto_reupscale_if_under_4mp: true
@@ -57,6 +61,20 @@ validation:
   srgb_enforcement: true
   jpeg_quality: 95
   dedup_phash_threshold: 6
+  max_blur_effect: 0.45
+  max_noise_sigma: 12.0
+  max_halo_score: 0.28
+  generate_qa_contact_sheet: true
+  portfolio_dedup_enabled: true
+  portfolio_dedup_threshold: 6
+  max_keyword_overlap_ratio: 0.65
+
+semantic_audit:
+  enabled: true
+  model_name: "ViT-B-32"
+  pretrained: "laion2b_s34b_b79k"
+  semantic_dup_threshold: 0.92
+  min_keyword_relevance: 0.16
 
 metadata:
   gemini_text_model: "gemini-3.8-flash"

@@ -62,6 +62,9 @@ class PipelineConfig:
 
     # Upscaling
     upscale_scale: int = 4
+    skip_upscale_if_above_mp: float = 12.0
+    target_max_megapixels: float = 20.0
+    upscale_timeout_per_image_sec: int = 120
     model_isolated: str = "ultramix-balanced-4x"
     model_scene: str = "high-fidelity-4x"
     model_fallback: str = "ultramix-balanced-4x"
@@ -78,11 +81,12 @@ class PipelineConfig:
     cleanup_stray_pixels: bool = True
     stray_pixel_min_area: int = 50
     color_decontaminate: bool = True
+    use_pymatting_foreground: bool = True
     tight_crop: bool = True
     tight_crop_margin_pct: float = 0.03
     auto_reupscale_if_under_4mp: bool = True
 
-    # Validation (Adobe Stock Rules)
+    # Validation & QA (Adobe Stock Rules + Scientific IQA)
     min_megapixels: float = 4.0
     max_megapixels: float = 100.0
     max_file_size_mb: float = 45.0
@@ -90,6 +94,20 @@ class PipelineConfig:
     srgb_enforcement: bool = True
     jpeg_quality: int = 95
     dedup_phash_threshold: int = 6
+    max_blur_effect: float = 0.45
+    max_noise_sigma: float = 12.0
+    max_halo_score: float = 0.28
+    generate_qa_contact_sheet: bool = True
+    portfolio_dedup_enabled: bool = True
+    portfolio_dedup_threshold: int = 6
+    max_keyword_overlap_ratio: float = 0.65
+
+    # Semantic Audit (Fase 4: OpenCLIP)
+    semantic_audit_enabled: bool = True
+    semantic_model_name: str = "ViT-B-32"
+    semantic_pretrained: str = "laion2b_s34b_b79k"
+    semantic_dup_threshold: float = 0.92
+    min_keyword_relevance: float = 0.16
 
     # Metadata & Compliance
     gemini_text_model: str = "gemini-3.8-flash"
@@ -177,6 +195,9 @@ def load_config(config_path: Path = None) -> PipelineConfig:
     upsc = data.get("upscaling", {})
     cfg.upscale_scale = upsc.get("scale", cfg.upscale_scale)
     cfg.skip_upscale = bool(upsc.get("skip_upscale", cfg.skip_upscale))
+    cfg.skip_upscale_if_above_mp = float(upsc.get("skip_upscale_if_above_mp", cfg.skip_upscale_if_above_mp))
+    cfg.target_max_megapixels = float(upsc.get("target_max_megapixels", cfg.target_max_megapixels))
+    cfg.upscale_timeout_per_image_sec = int(upsc.get("upscale_timeout_per_image_sec", cfg.upscale_timeout_per_image_sec))
     models = upsc.get("models", {})
     cfg.model_isolated = models.get("isolated", "ultramix-balanced-4x")
     cfg.model_scene = models.get("scene", cfg.model_scene)
@@ -196,11 +217,12 @@ def load_config(config_path: Path = None) -> PipelineConfig:
     cfg.cleanup_stray_pixels = seg.get("cleanup_stray_pixels", cfg.cleanup_stray_pixels)
     cfg.stray_pixel_min_area = int(seg.get("stray_pixel_min_area", cfg.stray_pixel_min_area))
     cfg.color_decontaminate = seg.get("color_decontaminate", cfg.color_decontaminate)
+    cfg.use_pymatting_foreground = bool(seg.get("use_pymatting_foreground", cfg.use_pymatting_foreground))
     cfg.tight_crop = seg.get("tight_crop", cfg.tight_crop)
     cfg.tight_crop_margin_pct = float(seg.get("tight_crop_margin_pct", cfg.tight_crop_margin_pct))
     cfg.auto_reupscale_if_under_4mp = seg.get("auto_reupscale_if_under_4mp", cfg.auto_reupscale_if_under_4mp)
 
-    # Validation
+    # Validation & QA
     val = data.get("validation", {})
     cfg.min_megapixels = float(val.get("min_megapixels", cfg.min_megapixels))
     cfg.max_megapixels = float(val.get("max_megapixels", cfg.max_megapixels))
@@ -209,6 +231,21 @@ def load_config(config_path: Path = None) -> PipelineConfig:
     cfg.srgb_enforcement = val.get("srgb_enforcement", cfg.srgb_enforcement)
     cfg.jpeg_quality = int(val.get("jpeg_quality", cfg.jpeg_quality))
     cfg.dedup_phash_threshold = int(val.get("dedup_phash_threshold", cfg.dedup_phash_threshold))
+    cfg.max_blur_effect = float(val.get("max_blur_effect", cfg.max_blur_effect))
+    cfg.max_noise_sigma = float(val.get("max_noise_sigma", cfg.max_noise_sigma))
+    cfg.max_halo_score = float(val.get("max_halo_score", cfg.max_halo_score))
+    cfg.generate_qa_contact_sheet = bool(val.get("generate_qa_contact_sheet", cfg.generate_qa_contact_sheet))
+    cfg.portfolio_dedup_enabled = bool(val.get("portfolio_dedup_enabled", cfg.portfolio_dedup_enabled))
+    cfg.portfolio_dedup_threshold = int(val.get("portfolio_dedup_threshold", cfg.portfolio_dedup_threshold))
+    cfg.max_keyword_overlap_ratio = float(val.get("max_keyword_overlap_ratio", cfg.max_keyword_overlap_ratio))
+
+    # Semantic Audit (OpenCLIP)
+    sem = data.get("semantic_audit", {})
+    cfg.semantic_audit_enabled = bool(sem.get("enabled", cfg.semantic_audit_enabled))
+    cfg.semantic_model_name = sem.get("model_name", cfg.semantic_model_name)
+    cfg.semantic_pretrained = sem.get("pretrained", cfg.semantic_pretrained)
+    cfg.semantic_dup_threshold = float(sem.get("semantic_dup_threshold", cfg.semantic_dup_threshold))
+    cfg.min_keyword_relevance = float(sem.get("min_keyword_relevance", cfg.min_keyword_relevance))
 
     # Metadata & Free-Tier Cloud AI
     meta = data.get("metadata", {})

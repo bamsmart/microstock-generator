@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Microstock Generator - 1-Click Step 5 Adobe Stock SFTP Upload Launcher (macOS)
-# Uploads all pending validated assets from result/ folders to Adobe Stock SFTP
-# and writes a summary log to logs/run_upload_*.txt.
+# Step 3: Adobe Stock Contributor SFTP Upload (With Anti-Duplicate Tracking)
+# Optional: use once SFTP is unlocked on your Adobe Stock Contributor account.
+# Otherwise, upload result/ images manually via Drag & Drop + Upload CSV.
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

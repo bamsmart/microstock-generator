@@ -21,7 +21,95 @@ import rembg
 
 from .config import PipelineConfig
 
+# Safe explicit ceiling above Adobe Stock's 100 MP max to prevent spurious
+# DecompressionBomb warnings on 4x-upscaled intermediates before supersampling.
+Image.MAX_IMAGE_PIXELS = 250_000_000
+
 _SRGB_PROFILE_BYTES = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+
+
+def downsample_to_target_mp(img: Image.Image, target_max_mp: float) -> Tuple[Image.Image, bool]:
+    """
+    Lanczos supersampling cap (sweet spot 12-20 MP):
+    Shrinks over-upscaled 4x outputs (e.g., 48-67 MP) down to target_max_mp before
+    heavy matting/saving, boosting 100% zoom acutance and cutting peak RAM ~75%.
+    """
+    if target_max_mp <= 0:
+        return img, False
+    w, h = img.size
+    mp = (w * h) / 1_000_000.0
+    if mp <= target_max_mp:
+        return img, False
+    scale = (target_max_mp / mp) ** 0.5
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+    return img.resize((new_w, new_h), Image.Resampling.LANCZOS), True
+
+
+def recover_foreground_pymatting(rgb: np.ndarray, alpha: np.ndarray) -> np.ndarray:
+    """
+    MIT PyMatting Multi-Level Foreground Estimation on semi-transparent fringe pixels:
+    Recovers true subject RGB along anti-aliased boundaries without white matte bleed.
+    Runs safely on a bounded-size subject crop and transfers only to transition pixels.
+    """
+    try:
+        from pymatting import estimate_foreground_ml
+    except Exception:
+        return rgb
+
+    fringe = (alpha > 0) & (alpha < 252)
+    if not np.any(fringe):
+        return rgb
+
+    ys, xs = np.where(alpha > 5)
+    if ys.size == 0 or xs.size == 0:
+        return rgb
+
+    h_full, w_full = alpha.shape
+    pad = 12
+    y0 = max(0, int(ys.min()) - pad)
+    y1 = min(h_full, int(ys.max()) + pad + 1)
+    x0 = max(0, int(xs.min()) - pad)
+    x1 = min(w_full, int(xs.max()) + pad + 1)
+
+    crop_rgb = rgb[y0:y1, x0:x1]
+    crop_alpha = alpha[y0:y1, x0:x1]
+    ch, cw = crop_alpha.shape
+    if ch < 8 or cw < 8:
+        return rgb
+
+    # Bound PyMatting working grid to <= 1600px longest side for <1s CPU speed & bounded RAM
+    max_dim = 1600
+    if max(ch, cw) > max_dim:
+        scale = max_dim / float(max(ch, cw))
+        wh, ww = max(8, int(round(ch * scale))), max(8, int(round(cw * scale)))
+        work_rgb = cv2.resize(crop_rgb, (ww, wh), interpolation=cv2.INTER_AREA)
+        work_a = cv2.resize(crop_alpha, (ww, wh), interpolation=cv2.INTER_LINEAR)
+    else:
+        work_rgb = crop_rgb
+        work_a = crop_alpha
+
+    try:
+        fg_small = estimate_foreground_ml(
+            work_rgb.astype(np.float64) / 255.0,
+            work_a.astype(np.float64) / 255.0,
+            n_big_iterations=1,
+            n_small_iterations=5,
+        )
+        fg_small_u8 = np.clip(fg_small * 255.0, 0.0, 255.0).round().astype(np.uint8)
+        if fg_small_u8.shape[:2] != (ch, cw):
+            fg_crop = cv2.resize(fg_small_u8, (cw, ch), interpolation=cv2.INTER_LINEAR)
+        else:
+            fg_crop = fg_small_u8
+
+        out_rgb = rgb.copy()
+        crop_fringe = (crop_alpha > 0) & (crop_alpha < 252)
+        out_crop = out_rgb[y0:y1, x0:x1]
+        out_crop[crop_fringe] = fg_crop[crop_fringe]
+        out_rgb[alpha == 0] = 0
+        return out_rgb
+    except Exception:
+        return rgb
 
 
 def normalize_alpha_confidence(
@@ -474,6 +562,11 @@ class PostProcessor:
         try:
             with Image.open(input_image_path) as raw_img_file:
                 raw_img = ImageOps.exif_transpose(raw_img_file)
+                target_max_mp = float(getattr(self.config, "target_max_megapixels", 20.0))
+                raw_img, was_supersampled = downsample_to_target_mp(raw_img, target_max_mp)
+                if was_supersampled:
+                    sw, sh = raw_img.size
+                    log_callback(f"  🎯 Lanczos supersampling -> {sw}x{sh} ({(sw * sh) / 1e6:.2f} MP crisp 100% zoom)")
                 raw_rgb = np.array(raw_img.convert("RGB"))
                 session = self.get_bg_session(log_callback=log_callback)
                 res = rembg.remove(raw_img, session=session, alpha_matting=False)
@@ -515,6 +608,8 @@ class PostProcessor:
                         )
                     else:
                         rgb = decontaminate_rgb_fringes(rgb, alpha)
+                    if getattr(self.config, "use_pymatting_foreground", True):
+                        rgb = recover_foreground_pymatting(rgb, alpha)
 
                 clean_np = np.dstack((rgb, alpha))
                 clean_pil = Image.fromarray(clean_np, mode="RGBA")
@@ -579,6 +674,11 @@ class PostProcessor:
         try:
             with Image.open(input_image_path) as raw_img_file:
                 raw_img = ImageOps.exif_transpose(raw_img_file)
+                target_max_mp = float(getattr(self.config, "target_max_megapixels", 20.0))
+                raw_img, was_supersampled = downsample_to_target_mp(raw_img, target_max_mp)
+                if was_supersampled:
+                    sw, sh = raw_img.size
+                    log_callback(f"  🎯 Lanczos supersampling -> {sw}x{sh} ({(sw * sh) / 1e6:.2f} MP crisp 100% zoom)")
                 rgb_img = raw_img.convert("RGB")
                 output_image_path.parent.mkdir(parents=True, exist_ok=True)
 

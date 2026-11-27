@@ -12,6 +12,7 @@ Features:
 
 import os
 import shutil
+import socket
 import subprocess
 import tempfile
 import time
@@ -108,19 +109,30 @@ class AdobeSFTPUploader:
 
         transport = None
         sftp = None
+        sock = None
         try:
-            transport = paramiko.Transport((self.host, self.port))
+            sock = socket.create_connection((self.host, self.port), timeout=20)
+            transport = paramiko.Transport(sock)
             transport.connect(username=self.username, password=self.password)
             sftp = paramiko.SFTPClient.from_transport(transport)
             log_callback(f"🔌 Connected to {self.host}:{self.port} via Paramiko SFTP ✅")
 
             for idx, (file_path, manifest_path) in enumerate(pending, start=1):
+                if not file_path.exists():
+                    log_callback(f"  ⏭️  [{idx}/{len(pending)}] Skipping missing file: {file_path.name}")
+                    continue
                 ok = False
                 last_err = ""
                 for attempt in range(1, self.max_retries + 1):
+                    if not file_path.exists():
+                        last_err = "file removed before upload"
+                        break
                     try:
                         sftp.put(str(file_path), file_path.name)
                         ok = True
+                        break
+                    except FileNotFoundError:
+                        last_err = "file removed during upload"
                         break
                     except Exception as e:
                         last_err = redact_secrets(str(e))
@@ -173,15 +185,23 @@ class AdobeSFTPUploader:
             log_callback(f"🔌 Uploading to {self.host}:{self.port} via system curl SFTP fallback...")
 
             for idx, (file_path, manifest_path) in enumerate(pending, start=1):
+                if not file_path.exists():
+                    log_callback(f"  ⏭️  [{idx}/{len(pending)}] Skipping missing file: {file_path.name}")
+                    continue
                 remote_url = f"sftp://{self.host}:{self.port}/{file_path.name}"
                 ok = False
                 last_err = ""
                 for attempt in range(1, self.max_retries + 1):
+                    if not file_path.exists():
+                        last_err = "file removed before upload"
+                        break
                     proc = subprocess.run(
                         [
                             curl_bin,
                             "-sS",
                             "--fail",
+                            "--connect-timeout",
+                            "20",
                             "--netrc-file",
                             str(netrc_path),
                             "-T",
@@ -233,6 +253,8 @@ class AdobeSFTPUploader:
         if dry_run:
             log_callback("🔍 UPLOAD DRY-RUN (no files transferred):")
             for idx, (fp, _) in enumerate(pending, start=1):
+                if not fp.exists():
+                    continue
                 size_mb = fp.stat().st_size / (1024 * 1024)
                 log_callback(f"  • [{idx}/{len(pending)}] {fp.parent.parent.name}/{fp.parent.name}/{fp.name} ({size_mb:.2f} MB)")
             return {"pending": len(pending), "uploaded": 0, "failed": 0, "dry_run": True}

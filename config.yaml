@@ -28,6 +28,9 @@ generation:
 upscaling:
   scale: 4
   skip_upscale: false                 # Set true to bypass upscaling if images already exceed 4 MP
+  skip_upscale_if_above_mp: 12.0      # Smart Adaptive: skip 4x AI upscale when raw input is already >= 12 MP
+  target_max_megapixels: 20.0         # Supersampling cap (16-20 MP sweet spot -> crisp 100% zoom & -75% RAM)
+  upscale_timeout_per_image_sec: 120  # Hard per-image timeout safeguard for upscayl-bin subprocess
   models:
     isolated: "ultramix-balanced-4x"  # Balanced realism & crisp edges (no plastic texture)
     scene: "high-fidelity-4x"         # Optimal for photorealistic scenes & textures
@@ -46,6 +49,7 @@ segmentation:
   cleanup_stray_pixels: true          # Remove tiny floating debris/islands
   stray_pixel_min_area: 50            # Minimum contour area to keep (pixels)
   color_decontaminate: true           # Nearest-foreground RGB extrapolation (anti-halo)
+  use_pymatting_foreground: true      # MIT PyMatting multi-level foreground recovery on fringe pixels
   tight_crop: true                    # Crop empty space around isolated subject
   tight_crop_margin_pct: 0.03         # 3% breathing margin around subject
   auto_reupscale_if_under_4mp: true   # Guard if tight crop shrinks image below 4 MP
@@ -58,6 +62,20 @@ validation:
   srgb_enforcement: true             # Ensure sRGB IEC61966-2.1 color profile
   jpeg_quality: 95                   # High quality JPEG for scenes
   dedup_phash_threshold: 6           # Hamming distance threshold for duplicate rejection
+  max_blur_effect: 0.45              # skimage.measure.blur_effect threshold (0=sharp, 1=blurry)
+  max_noise_sigma: 12.0              # skimage.restoration.estimate_sigma threshold
+  max_halo_score: 0.28               # Isolated PNG bright/white fringe detector threshold
+  generate_qa_contact_sheet: true    # Save dark-background qa_contact_sheet.jpg outside result/
+  portfolio_dedup_enabled: true      # Cross-batch pHash protection (.portfolio_index.json)
+  portfolio_dedup_threshold: 6       # Hamming distance for cross-batch duplicate warning/quarantine
+  max_keyword_overlap_ratio: 0.65    # Warn if >65% of keywords overlap with prior asset
+
+semantic_audit:
+  enabled: true                      # Fase 4: OpenCLIP cross-angle dedup & keyword alignment (auto-skips if offline)
+  model_name: "ViT-B-32"
+  pretrained: "laion2b_s34b_b79k"
+  semantic_dup_threshold: 0.92       # Cosine similarity warning/guard for cross-angle duplicates
+  min_keyword_relevance: 0.16        # Minimum CLIP score for top-10 Adobe Stock keywords
 
 metadata:
   gemini_text_model: "gemini-3.8-flash"

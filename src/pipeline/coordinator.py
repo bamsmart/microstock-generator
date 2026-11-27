@@ -9,24 +9,84 @@ Step 4 Production Pipeline (Resilient & Stage-Resumable):
 """
 
 import json
+import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 import numpy as np
 from PIL import Image, ImageOps
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
 from .compliance import sanitize_filename
 from .config import PipelineConfig, load_config
-from .dedup import filter_near_duplicates
+from .dedup import (
+    PortfolioIndex,
+    compute_phash,
+    filter_near_duplicates,
+    validate_raw_image_readable,
+)
 from .logger import RunLogger
 from .manifest import ManifestManager, calculate_file_hash
 from .metadata import MetadataEngine
 from .postprocess import PostProcessor
 from .qa_auditor import VisionQAAuditor
+from .qa_preview import generate_qa_contact_sheet
+from .semantic_audit import SemanticAuditor
 from .upscaler import UpscaylEngine
 from .validator import TechnicalValidator
 
+Image.MAX_IMAGE_PIXELS = 250_000_000
 RESULT_EXTS = (".png", ".jpg", ".jpeg")
+
+
+class _BatchLock:
+    """Non-blocking atomic POSIX flock guard preventing concurrent runs on the same batch."""
+
+    def __init__(self, lock_path: Path):
+        self.lock_path = lock_path
+        self._fd: Optional[int] = None
+        self.acquired: bool = False
+
+    def __enter__(self) -> "_BatchLock":
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        if fcntl is None:
+            self.acquired = True
+            return self
+        fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.ftruncate(fd, 0)
+            os.write(fd, str(os.getpid()).encode("ascii"))
+            self._fd = fd
+            self.acquired = True
+        except BlockingIOError:
+            os.close(fd)
+            self.acquired = False
+        except Exception:
+            os.close(fd)
+            self.acquired = True
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._fd is not None:
+            try:
+                if fcntl is not None:
+                    fcntl.flock(self._fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+            try:
+                os.close(self._fd)
+            except Exception:
+                pass
+            try:
+                self.lock_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            self._fd = None
 
 
 def classify_asset_type(image_path: Path) -> str:
@@ -89,6 +149,11 @@ class PipelineCoordinator:
         self.validator = TechnicalValidator(self.config)
         self.qa_auditor = VisionQAAuditor(self.config)
         self.metadata_engine = MetadataEngine(self.config)
+        self.semantic_auditor = SemanticAuditor(
+            model_name=self.config.semantic_model_name,
+            pretrained=self.config.semantic_pretrained,
+            enabled=self.config.semantic_audit_enabled,
+        )
 
     def log(self, msg: str = ""):
         if self.run_logger is not None:
@@ -140,7 +205,7 @@ class PipelineCoordinator:
                 MetadataEngine.export_adobe_csv([], csv_path, valid_filenames=set())
             return {"reconciled": 0, "csv_path": csv_path if csv_path.exists() else None}
 
-        exiftool_available = self.config.embed_iptc_metadata and MetadataEngine.has_exiftool()
+        embed_enabled = self.config.embed_iptc_metadata
         rows_to_export: List[Dict[str, Any]] = []
         reconciled_count = 0
 
@@ -204,8 +269,8 @@ class PipelineCoordinator:
                     self.log(f"  ⏭️  Skipping missing result asset during recovery: {res_file.name}")
                     continue
 
-                if exiftool_available and title and not has_man:
-                    MetadataEngine.embed_iptc_xmp_exiftool(
+                if embed_enabled and title and not has_man:
+                    MetadataEngine.embed_metadata(
                         res_file, title=title, keywords=keywords, log_callback=self.log
                     )
 
@@ -269,9 +334,40 @@ class PipelineCoordinator:
     ) -> Dict[str, Any]:
         """
         Process a single batch folder through the full Step 4 pipeline.
-        Outputs production-ready images, adobe_stock_metadata.csv, manifest.json, and .txt run log.
-        Resilient to manually deleted files and resumable on mid-run retries.
+        Outputs production-ready images, adobe_stock_metadata.csv, manifest.json,
+        qa_contact_sheet.jpg, and .txt run log. Guarded by atomic .pipeline.lock.
         """
+        with _BatchLock(folder / ".pipeline.lock") as lock:
+            if not lock.acquired:
+                self.log(
+                    f"⚠️ Another pipeline instance is already processing '{folder.name}'. "
+                    f"Skipping to prevent file corruption."
+                )
+                return {
+                    "folder": folder.name,
+                    "passed": 0,
+                    "skipped": 0,
+                    "reconciled": 0,
+                    "failed": 0,
+                    "ai_rejected": 0,
+                    "locked": True,
+                    "result_folder": custom_output_folder or (folder / "result"),
+                    "csv_path": None,
+                }
+            return self._process_batch_folder_locked(
+                folder=folder,
+                asset_type=asset_type,
+                prompt_hint=prompt_hint,
+                custom_output_folder=custom_output_folder,
+            )
+
+    def _process_batch_folder_locked(
+        self,
+        folder: Path,
+        asset_type: str = "auto",
+        prompt_hint: Optional[str] = None,
+        custom_output_folder: Optional[Path] = None
+    ) -> Dict[str, Any]:
         self.log(f"\n==================================================")
         self.log(f"🔄 Processing Folder: [{folder.name}] (Mode: {asset_type.upper()})")
         self.log(f"   Background Removal: {'ENABLED ✅' if self.config.remove_bg else 'DISABLED (Original Background Preserved) ⚪'}")
@@ -376,8 +472,36 @@ class PipelineCoordinator:
                 "csv_path": rec_res["csv_path"],
             }
 
-        # 1. Deduplication Gate (pHash)
+        # 1. Corrupt Image Preflight + pHash Deduplication (within batch & cross-batch portfolio)
         pending_raw_images = [p for p in pending_raw_images if p.exists()]
+        healthy_raw_images: List[Path] = []
+        corrupt_rejected_folder = folder / "rejected_qa"
+        for p in pending_raw_images:
+            ok_img, reason = validate_raw_image_readable(p)
+            if not ok_img:
+                self.log(f"  ❌ Corrupt/unreadable raw image quarantined: {p.name} ({reason})")
+                corrupt_rejected_folder.mkdir(parents=True, exist_ok=True)
+                if p.exists():
+                    shutil.move(p, corrupt_rejected_folder / p.name)
+            else:
+                healthy_raw_images.append(p)
+        pending_raw_images = healthy_raw_images
+
+        if not pending_raw_images:
+            rec_res = self._reconcile_result_metadata_and_csv(
+                folder, result_folder, manifest, stage_cache, prompt_hint
+            )
+            return {
+                "folder": folder.name,
+                "passed": 0,
+                "skipped": skipped_count,
+                "reconciled": rec_res["reconciled"],
+                "failed": 0,
+                "ai_rejected": 0,
+                "result_folder": result_folder,
+                "csv_path": rec_res["csv_path"],
+            }
+
         self.log(f"\n[1/5] Perceptual Hash Deduplication ({len(pending_raw_images)} new image(s), {skipped_count} skipped)...")
         kept_images, rejected_dups = filter_near_duplicates(
             pending_raw_images,
@@ -391,6 +515,46 @@ class PipelineCoordinator:
                 if dup_img.exists():
                     shutil.move(dup_img, dup_folder / dup_img.name)
                     self.log(f"   -> Moved {dup_img.name} (Hamming dist: {dist} to {original.name})")
+
+        # Cross-batch Portfolio Dedup Index (outside batch so it covers all past batches)
+        portfolio_dir = folder.parent
+        if self.config.base_dir is not None:
+            try:
+                base_res = self.config.base_dir.resolve()
+                fld_res = folder.resolve()
+                if (fld_res == base_res or base_res in fld_res.parents) and self.config.base_dir.exists():
+                    portfolio_dir = self.config.base_dir
+            except (PermissionError, OSError):
+                portfolio_dir = folder.parent
+        portfolio_index = PortfolioIndex(portfolio_dir / ".portfolio_index.json")
+        raw_phashes: Dict[str, str] = {}
+        if getattr(self.config, "portfolio_dedup_enabled", True) and kept_images:
+            cross_kept: List[Path] = []
+            for img_path in kept_images:
+                if not img_path.exists():
+                    continue
+                try:
+                    ph = compute_phash(img_path)
+                except Exception:
+                    ph = ""
+                raw_phashes[img_path.stem] = ph
+                match = portfolio_index.find_similar_phash(
+                    ph,
+                    threshold=int(getattr(self.config, "portfolio_dedup_threshold", 6)),
+                    exclude_filename=sanitize_filename(img_path.stem, ext=".png", max_len=self.config.max_filename_chars),
+                )
+                if match is not None:
+                    prev_entry, dist = match
+                    dup_folder = folder / "rejected_similar"
+                    dup_folder.mkdir(parents=True, exist_ok=True)
+                    shutil.move(img_path, dup_folder / img_path.name)
+                    self.log(
+                        f"  ⚠️ Portfolio duplicate blocked: {img_path.name} closely matches "
+                        f"'{prev_entry.get('batch')}/{prev_entry.get('filename')}' (Hamming dist={dist})"
+                    )
+                    continue
+                cross_kept.append(img_path)
+            kept_images = cross_kept
 
         # Determine per-image asset type (stem -> 'isolated' or 'scene')
         image_types: Dict[str, str] = {}
@@ -514,11 +678,12 @@ class PipelineCoordinator:
                 "csv_path": rec_res["csv_path"],
             }
 
-        # 3. Upscale (Upscayl CLI) or Passthrough — skips images already in upscaled/
+        # 3. Smart Adaptive Upscale (Upscayl CLI) — skips already-upscaled OR raw >= skip_upscale_if_above_mp
         upscaled_folder = folder / "upscaled"
         upscaled_folder.mkdir(parents=True, exist_ok=True)
 
         can_upscale = self.upscaler.verify_binary() and not self.config.skip_upscale
+        skip_above_mp = float(getattr(self.config, "skip_upscale_if_above_mp", 12.0))
         imgs_needing_upscale: List[Path] = []
 
         for img in qa_passed_images:
@@ -532,11 +697,25 @@ class PipelineCoordinator:
                     break
             if existing_up is not None:
                 self.log(f"  ♻️  Reusing existing upscaled file: {existing_up.name}")
+                continue
+
+            # Smart Adaptive check: avoid 4x blow-up to 48-67 MP if raw image is already high-res
+            raw_mp = 0.0
+            try:
+                with Image.open(img) as im_sz:
+                    rw, rh = im_sz.size
+                    raw_mp = (rw * rh) / 1_000_000.0
+            except Exception:
+                raw_mp = 0.0
+
+            if skip_above_mp > 0 and raw_mp >= skip_above_mp:
+                self.log(f"  ⏭️  Raw already {raw_mp:.2f} MP (>= {skip_above_mp:.1f} MP) — skipping 4x upscale: {img.name}")
+                shutil.copy2(img, upscaled_folder / img.name)
             else:
                 imgs_needing_upscale.append(img)
 
         if not imgs_needing_upscale:
-            self.log("\n[3/5] All passed images already present in upscaled/. Skipping upscaling...")
+            self.log("\n[3/5] No images require Upscayl 4x (all reused or already >= 12 MP)...")
         elif not can_upscale:
             if self.config.skip_upscale:
                 self.log("\n[3/5] Upscaling skipped (--skip-upscale). Passing images directly to post-processing...")
@@ -555,24 +734,33 @@ class PipelineCoordinator:
                 self.log(f"\n[3/5] AI Super-Resolution 4x [{group_type.upper()}] ({len(group_imgs)} images via {model_name})...")
 
                 temp_upscale_in = folder / f"_temp_{group_type}"
-                temp_upscale_in.mkdir(parents=True, exist_ok=True)
-                for img in group_imgs:
-                    if img.exists():
-                        shutil.copy2(img, temp_upscale_in / img.name)
-
-                upscale_ok = self.upscaler.upscale_folder(
-                    temp_upscale_in,
-                    upscaled_folder,
-                    model_name=model_name,
-                    scale=self.config.upscale_scale,
-                    log_callback=self.log
-                )
-                shutil.rmtree(temp_upscale_in, ignore_errors=True)
-
-                if not upscale_ok:
-                    self.log(f"⚠️ Upscaling failed for {group_type} group. Falling back to copying raw images.")
+                upscale_ok = False
+                try:
+                    temp_upscale_in.mkdir(parents=True, exist_ok=True)
                     for img in group_imgs:
                         if img.exists():
+                            shutil.copy2(img, temp_upscale_in / img.name)
+
+                    upscale_ok = self.upscaler.upscale_folder(
+                        temp_upscale_in,
+                        upscaled_folder,
+                        model_name=model_name,
+                        scale=self.config.upscale_scale,
+                        log_callback=self.log
+                    )
+                finally:
+                    shutil.rmtree(temp_upscale_in, ignore_errors=True)
+
+                if not upscale_ok:
+                    self.log(f"⚠️ Upscaling incomplete/failed for {group_type} group. Falling back ONLY for missing outputs.")
+                    for img in group_imgs:
+                        if not img.exists():
+                            continue
+                        already_done = any(
+                            cand.is_file() and cand.stat().st_size > 0
+                            for cand in (upscaled_folder / f"{img.stem}.png", upscaled_folder / img.name)
+                        )
+                        if not already_done:
                             shutil.copy2(img, upscaled_folder / img.name)
 
         # 4. Post-Processing
@@ -583,15 +771,22 @@ class PipelineCoordinator:
         self.log(f"\n[4/5] High-Precision Post-Processing -> {result_folder}...")
 
         active_stems = {p.stem for p in qa_passed_images}
-        upscaled_files = sorted([
-            f for f in (
-                list(upscaled_folder.glob("*.png"))
-                + list(upscaled_folder.glob("*.jpg"))
-                + list(upscaled_folder.glob("*.jpeg"))
-            )
-            if f.stem in active_stems
-        ])
+        # Deduplicate upscaled_files by stem (preferring .png over .jpg/.jpeg)
+        raw_up_candidates = (
+            list(upscaled_folder.glob("*.png"))
+            + list(upscaled_folder.glob("*.jpg"))
+            + list(upscaled_folder.glob("*.jpeg"))
+        )
+        by_stem: Dict[str, Path] = {}
+        for f in raw_up_candidates:
+            if f.stem not in active_stems:
+                continue
+            prev = by_stem.get(f.stem)
+            if prev is None or (f.suffix.lower() == ".png" and prev.suffix.lower() != ".png"):
+                by_stem[f.stem] = f
+        upscaled_files = sorted(by_stem.values(), key=lambda p: p.name)
         processed_items: List[tuple] = []
+        claimed_filenames: Set[str] = set()
 
         for idx, up_file in enumerate(upscaled_files, start=1):
             if not up_file.exists():
@@ -613,24 +808,27 @@ class PipelineCoordinator:
             clean_filename = sanitize_filename(preferred_stem, ext=out_ext, max_len=self.config.max_filename_chars)
             target_out = result_folder / clean_filename
 
-            # Reuse existing unrecorded result asset from an interrupted previous run
+            # Reuse existing unrecorded result asset only if not already claimed in this run
             if (
-                target_out.exists()
+                target_out.name not in claimed_filenames
+                and target_out.exists()
                 and target_out.stat().st_size > 0
                 and manifest.get_record_by_output_name(target_out.name) is None
             ):
+                claimed_filenames.add(target_out.name)
                 processed_items.append((target_out, img_type, orig_stem, meta))
                 self.log(f"  ♻️  Reusing existing result asset [{idx}/{len(upscaled_files)}]: {target_out.name} ✅")
                 continue
 
-            # Handle name collisions if multiple files sanitize to identical stems
+            # Handle name collisions if multiple distinct files sanitize to identical stems
             collision_idx = 1
-            while target_out.exists():
+            while target_out.exists() or target_out.name in claimed_filenames:
                 suffix = f"_{collision_idx}"
                 stem_len = self.config.max_filename_chars - len(out_ext) - len(suffix)
                 safe_stem = sanitize_filename(preferred_stem, ext="", max_len=stem_len).rstrip("_-")
                 target_out = result_folder / f"{safe_stem}{suffix}{out_ext}"
                 collision_idx += 1
+            claimed_filenames.add(target_out.name)
 
             try:
                 if img_type == "isolated":
@@ -649,15 +847,13 @@ class PipelineCoordinator:
             else:
                 self.log(f"  ❌ Post-processing failed on {up_file.name}: {err}")
 
-        # 5. Technical Validation + Metadata Embedding + Incremental CSV Export + Manifest
+        # 5. Technical Validation + Metadata Embedding + Keyword/Semantic Audit + CSV + Dark QA Sheet
         self.log(f"\n[5/5] Technical Validation, Metadata Embedding & CSV Export...")
         passed_records: List[Dict[str, Any]] = []
+        validation_by_name: Dict[str, Dict[str, Any]] = {}
         rejected_qa_folder = folder / "rejected_qa"
-        exiftool_available = self.config.embed_iptc_metadata and MetadataEngine.has_exiftool()
+        embed_enabled = self.config.embed_iptc_metadata
         csv_path: Optional[Path] = result_folder / "adobe_stock_metadata.csv"
-
-        if self.config.embed_iptc_metadata and not exiftool_available:
-            self.log("  ℹ️ ExifTool not installed on PATH — skipping inline IPTC/XMP embed (CSV export still active).")
 
         for final_path, img_type, orig_stem, meta in processed_items:
             if not final_path.exists():
@@ -683,17 +879,53 @@ class PipelineCoordinator:
                 keywords = meta.get("keywords", [])
                 category_id = meta.get("category_id", 8)
 
-                if exiftool_available and title and final_path.exists():
-                    embedded = MetadataEngine.embed_iptc_xmp_exiftool(
+                if embed_enabled and title and final_path.exists():
+                    embedded, method = MetadataEngine.embed_metadata(
                         final_path, title=title, keywords=keywords, log_callback=self.log
                     )
                     if embedded:
-                        self.log(f"     🏷️  IPTC/XMP embedded into {final_path.name}")
+                        self.log(f"     🏷️  Metadata embedded ({method}) into {final_path.name}")
 
                 if not final_path.exists():
                     self.log(f"  ⏭️  Skipping missing result asset (removed before metadata save): {final_path.name}")
                     manifest.mark_raw_removed(raw_hashes.get(orig_stem, ""), orig_stem, final_path.name)
                     continue
+
+                # Keyword Cannibalization Audit
+                kw_match = portfolio_index.find_keyword_overlap(
+                    keywords,
+                    threshold=float(getattr(self.config, "max_keyword_overlap_ratio", 0.65)),
+                    exclude_filename=final_path.name,
+                )
+                if kw_match is not None:
+                    prev_entry, ratio = kw_match
+                    val_res["warnings"].append(
+                        f"High keyword overlap ({int(ratio * 100)}%) with '{prev_entry.get('batch')}/{prev_entry.get('filename')}' — diversify SEO keywords."
+                    )
+
+                # Optional OpenCLIP Semantic Audit (cross-angle dup + top-10 keyword alignment)
+                clip_vec: Optional[List[float]] = None
+                if self.config.semantic_audit_enabled and final_path.exists():
+                    clip_vec = self.semantic_auditor.embed_image(final_path)
+                    if clip_vec is not None:
+                        sem_dup = self.semantic_auditor.find_semantic_duplicate(
+                            clip_vec,
+                            portfolio_index.entries,
+                            threshold=float(getattr(self.config, "semantic_dup_threshold", 0.92)),
+                            exclude_filename=final_path.name,
+                        )
+                        if sem_dup is not None:
+                            dup_entry, sim = sem_dup
+                            val_res["warnings"].append(
+                                f"Semantic CLIP similarity {sim:.2f} with '{dup_entry.get('batch')}/{dup_entry.get('filename')}' (cross-angle Similar Content risk)."
+                            )
+                        kw_scores = self.semantic_auditor.score_keywords_relevance(clip_vec, keywords, top_k=10)
+                        min_rel = float(getattr(self.config, "min_keyword_relevance", 0.16))
+                        weak_kws = [k for k, sc in kw_scores if sc < min_rel]
+                        if weak_kws:
+                            val_res["warnings"].append(
+                                f"Low CLIP alignment on Top-10 keywords: {', '.join(weak_kws[:4])}"
+                            )
 
                 row = {
                     "filename": final_path.name,
@@ -719,17 +951,29 @@ class PipelineCoordinator:
                     raw_hash=raw_hashes.get(orig_stem, ""),
                 )
 
+                portfolio_index.record_asset(
+                    filename=final_path.name,
+                    batch=folder.name,
+                    phash=raw_phashes.get(orig_stem, ""),
+                    keywords=keywords,
+                    clip_vec=clip_vec,
+                )
+
                 if self.config.export_csv:
                     MetadataEngine.export_adobe_csv([row], csv_path)
 
+                stats = val_res["stats"]
+                blur_txt = f" | blur={stats['blur_effect']}" if stats.get("blur_effect") is not None else ""
+                halo_txt = f" | halo={stats['halo_score']}" if stats.get("halo_score") is not None else ""
                 self.log(
-                    f"  ✅ READY: {final_path.name} ({val_res['stats'].get('megapixels')} MP, "
-                    f"{val_res['stats'].get('file_size_mb')} MB) | Cat #{category_id} | {len(keywords)} kw"
+                    f"  ✅ READY: {final_path.name} ({stats.get('megapixels')} MP, "
+                    f"{stats.get('file_size_mb')} MB{blur_txt}{halo_txt}) | Cat #{category_id} | {len(keywords)} kw"
                 )
                 if val_res["warnings"]:
                     for w in val_res["warnings"]:
                         self.log(f"     ⚠️ {w}")
 
+                validation_by_name[final_path.name] = val_res
                 passed_records.append(val_res)
 
             except FileNotFoundError:
@@ -737,11 +981,24 @@ class PipelineCoordinator:
                 manifest.mark_raw_removed(raw_hashes.get(orig_stem, ""), orig_stem, final_path.name)
                 continue
 
+        if passed_records:
+            portfolio_index.save()
+
         # Final reconciliation: recover any missing metadata/CSV & prune any deleted files from CSV
         rec_res = self._reconcile_result_metadata_and_csv(
             folder, result_folder, manifest, stage_cache, prompt_hint
         )
         final_csv = rec_res["csv_path"] if rec_res["csv_path"] else (csv_path if csv_path.exists() else None)
+
+        # Generate dark-background QA contact sheet outside result/ for 10-second human inspection
+        if getattr(self.config, "generate_qa_contact_sheet", True) and (passed_records or rec_res["reconciled"]):
+            qa_sheet_path = generate_qa_contact_sheet(
+                result_folder,
+                validation_map=validation_by_name,
+                output_path=folder / "qa_contact_sheet.jpg",
+            )
+            if qa_sheet_path:
+                self.log(f"🖼️  Dark-Canvas QA Contact Sheet saved: {qa_sheet_path}")
 
         self.log(f"\n🎉 Finished! {len(passed_records)} new + {rec_res['reconciled']} recovered asset(s) ready in: {result_folder}")
 

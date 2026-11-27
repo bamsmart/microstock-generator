@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "microstock-generator"
-version = "2.0.0"
+version = "2.2.0"
 description = "Universal cross-platform automated pipeline for generating, upscaling, cutouts, and validating commercial microstock assets (Adobe Stock, Shutterstock, Freepik, etc.)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,10 +26,14 @@ dependencies = [
     "pillow>=10.0.0",
     "rembg>=2.0.50",
     "opencv-python-headless>=4.8.0",
-    "numpy>=1.24.0",
+    "numpy>=1.24.0,<2.0.0",
     "scipy>=1.10.0",
     "PyMatting>=1.1.0",
+    "scikit-image>=0.22.0",
     "imagehash>=4.3.1",
+    "piexif>=1.1.3",
+    "google-genai>=0.1.1",
+    "paramiko>=3.4.0",
     "pyyaml>=6.0.0",
     "python-dotenv>=1.0.0",
     "tqdm>=4.66.0"
@@ -38,6 +42,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0"
+]
+semantic = [
+    "open-clip-torch>=2.24.0"
 ]
 
 [tool.pytest.ini_options]
