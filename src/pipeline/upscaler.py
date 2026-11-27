@@ -181,7 +181,11 @@ class UpscaylEngine:
         timeout_sec: Optional[int] = None,
         log_callback=print
     ) -> bool:
-        """Upscale all supported images in input_folder to output_folder with a hard watchdog timeout."""
+        """
+        Upscale all supported images in input_folder to output_folder.
+        Uses a smart inactivity/stall watchdog (resets on stdout progress or new output bytes)
+        so large multi-image batches are never killed while Upscayl is actively working.
+        """
         if not self.verify_binary():
             log_callback(
                 f"❌ Upscayl binary or models dir missing:\n"
@@ -196,9 +200,9 @@ class UpscaylEngine:
         model_name = model_name or self.config.model_fallback
 
         if timeout_sec is None:
-            per_img = int(getattr(self.config, "upscale_timeout_per_image_sec", 120))
-            in_count = len([p for p in Path(input_folder).iterdir() if p.is_file()]) if Path(input_folder).exists() else 1
-            timeout_sec = min(1800, max(180, max(1, in_count) * per_img))
+            stall_timeout = int(getattr(self.config, "upscale_timeout_per_image_sec", 600))
+        else:
+            stall_timeout = int(timeout_sec)
 
         cmd = [
             str(self.bin_path),
@@ -211,9 +215,11 @@ class UpscaylEngine:
         ]
 
         start_time = time.time()
+        last_activity = [time.monotonic()]
         timed_out = threading.Event()
+        stop_watchdog = threading.Event()
         process = None
-        timer = None
+        watchdog = None
         try:
             process = subprocess.Popen(
                 cmd,
@@ -223,23 +229,41 @@ class UpscaylEngine:
                 bufsize=1
             )
 
-            def _on_timeout():
-                timed_out.set()
+            def _snapshot_output() -> Tuple[int, int]:
                 try:
-                    if process and process.poll() is None:
-                        process.kill()
+                    files = [p for p in output_folder.iterdir() if p.is_file()]
+                    return len(files), sum(p.stat().st_size for p in files)
                 except Exception:
-                    pass
+                    return 0, 0
 
-            if timeout_sec and timeout_sec > 0:
-                timer = threading.Timer(float(timeout_sec), _on_timeout)
-                timer.daemon = True
-                timer.start()
+            def _watchdog_loop():
+                poll_interval = min(1.0, max(0.2, stall_timeout / 4.0))
+                last_snap = _snapshot_output()
+                while not stop_watchdog.wait(poll_interval):
+                    if process is None or process.poll() is not None:
+                        break
+                    snap = _snapshot_output()
+                    if snap != last_snap:
+                        last_snap = snap
+                        last_activity[0] = time.monotonic()
+                    if time.monotonic() - last_activity[0] >= stall_timeout:
+                        timed_out.set()
+                        try:
+                            process.kill()
+                        except Exception:
+                            pass
+                        break
+
+            if stall_timeout > 0:
+                watchdog = threading.Thread(target=_watchdog_loop, daemon=True)
+                watchdog.start()
 
             completed = 0
             if process.stdout is not None:
                 for line in process.stdout:
                     line = line.strip()
+                    if line:
+                        last_activity[0] = time.monotonic()
                     if "Upscayled Successfully" in line:
                         completed += 1
                         log_callback(f"  [Upscayl {scale}x] Image #{completed} upscaled successfully ✅")
@@ -249,7 +273,7 @@ class UpscaylEngine:
             process.wait()
             elapsed = time.time() - start_time
             if timed_out.is_set():
-                log_callback(f"⏱️ Upscayl timed out after {timeout_sec}s — terminated hung subprocess.")
+                log_callback(f"⏱️ Upscayl stalled with no progress for {stall_timeout}s — terminated hung subprocess.")
                 return False
             if process.returncode == 0:
                 log_callback(f"✨ Upscaling finished in {elapsed:.1f}s (Exit 0).")
@@ -262,8 +286,9 @@ class UpscaylEngine:
             log_callback(f"❌ Subprocess error while running Upscayl: {e}")
             return False
         finally:
-            if timer is not None:
-                timer.cancel()
+            stop_watchdog.set()
+            if watchdog is not None:
+                watchdog.join(timeout=1.0)
             if process is not None and process.poll() is None:
                 try:
                     process.kill()

@@ -894,6 +894,17 @@ def test_fase0_upscaler_timeout_and_llm_cooldown_recovery():
         ok = engine.upscale_folder(in_dir, out_dir, timeout_sec=1, log_callback=lambda *_: None)
         assert ok is False
 
+        # Active progressing subprocess must NOT be killed even when total runtime > timeout_sec
+        active_wrapper = tmp / "active_upscayl.sh"
+        active_wrapper.write_text(
+            "#!/bin/sh\n/usr/bin/python3 -u -c 'import time\nfor i in range(5):\n  print(f\"{(i+1)*20}.00%\", flush=True)\n  time.sleep(0.35)\nprint(\"Upscayled Successfully\", flush=True)'\n",
+            encoding="utf-8",
+        )
+        active_wrapper.chmod(0o755)
+        engine.bin_path = active_wrapper
+        ok_active = engine.upscale_folder(in_dir, out_dir, timeout_sec=1, log_callback=lambda *_: None)
+        assert ok_active is True
+
         # 3. PromptHistory atomic save leaves no leftover .tmp
         hist_path = tmp / "prompt_history.json"
         hist = PromptHistory(hist_path)
@@ -1073,6 +1084,109 @@ def test_step1_to_step3_root_launchers_valid():
     ]
     for old_name in obsolete:
         assert not (PROJECT_ROOT / old_name).exists(), f"Obsolete launcher still exists: {old_name}"
+
+
+def test_prompt_pack_auto_naming_preserves_asset_type():
+    import json
+    from unittest.mock import patch
+    from src.pipeline.coordinator import PipelineCoordinator
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        prompts_dir = base / "prompts"
+        prompts_dir.mkdir(parents=True)
+
+        # Prompt entries include cross-extension suggested_filename to prove result type is strictly preserved
+        prompts_payload = {
+            "prompts": [
+                {
+                    "asset_type": "isolated",
+                    "theme": "ramadan brass lantern",
+                    "subject": "ornate brass ramadan crescent lantern",
+                    "folder_slug": "ramadan_lantern_iso",
+                    "suggested_filename": "ramadan_brass_lantern.jpg",  # Deliberately .jpg in prompt
+                },
+                {
+                    "asset_type": "scene",
+                    "theme": "travertine stone skincare podium",
+                    "subject": "minimalist travertine stone cosmetic podium",
+                    "folder_slug": "travertine_podium_scene",
+                    "suggested_filename": "travertine_podium_decor.png",  # Deliberately .png in prompt
+                },
+            ]
+        }
+        (prompts_dir / "prompts_2026-11-27_100000.json").write_text(
+            json.dumps(prompts_payload, indent=2), encoding="utf-8"
+        )
+
+        # Batch 1: Two random-named variations inside folder matching isolated prompt (or matched via SEO metadata)
+        iso_batch = base / "ramadan_lantern_iso"
+        (iso_batch / "raw").mkdir(parents=True)
+        for idx_i, fname in enumerate(("Gemini_Generated_Image_9x1a.png", "download_8821.png")):
+            rgb = np.full((2200, 2200, 3), 255, dtype=np.uint8)
+            if idx_i == 0:
+                rgb[400:1800, 400:1800] = [170, 120, 40]
+            else:
+                rgb[300:1700, 600:1900] = [140, 90, 30]
+            Image.fromarray(rgb, mode="RGB").save(iso_batch / "raw" / fname)
+
+        cfg = load_config()
+        cfg.base_dir = base
+        cfg.prompts_dir = prompts_dir
+        cfg.skip_upscale = True
+        cfg.enable_ai_qa = False
+        cfg.enable_vision_metadata = False
+        cfg.embed_iptc_metadata = False
+        cfg.semantic_audit_enabled = False
+        cfg.generate_qa_contact_sheet = False
+
+        coord = PipelineCoordinator(cfg)
+
+        def fake_bg_remove(im, session=None, alpha_matting=False):
+            arr = np.array(im.convert("RGB"))
+            alpha = np.where(np.min(arr, axis=2) < 230, 255, 0).astype(np.uint8)
+            return Image.fromarray(np.dstack((arr, alpha)), mode="RGBA")
+
+        with patch.object(coord.postprocessor, "get_bg_session", return_value=object()), \
+             patch("src.pipeline.postprocess.rembg.remove", side_effect=fake_bg_remove):
+            res_iso = coord.process_batch_folder(iso_batch, asset_type="isolated")
+
+        assert res_iso["passed"] == 2
+        iso_files = sorted(p.name for p in (iso_batch / "result").glob("*.png"))
+        # Strictly keeps .png RGBA type despite prompt saying .jpg, and disambiguates 2nd copy cleanly
+        assert iso_files == ["ramadan_brass_lantern.png", "ramadan_brass_lantern_1.png"]
+
+        # Batch 2: Generic batch folder + random download name, matched via Vision SEO metadata -> keeps .jpg RGB type
+        mixed_batch = base / "random_batch"
+        (mixed_batch / "raw").mkdir(parents=True)
+        scene_arr = np.zeros((2000, 2100, 3), dtype=np.uint8)
+        scene_arr[:, :1050] = [190, 175, 160]
+        scene_arr[:, 1050:] = [95, 85, 75]
+        Image.fromarray(scene_arr, mode="RGB").save(mixed_batch / "raw" / "Gemini_Generated_Image_abc99.png")
+
+        coord2 = PipelineCoordinator(cfg)
+        cfg.enable_vision_metadata = True
+        cfg.enable_ai_qa = True
+        mock_meta = {
+            "passed": True,
+            "score": 0.94,
+            "detected_issues": [],
+            "reasons": ["Clean commercial scene"],
+            "title": "Minimalist travertine stone podium for skincare product display",
+            "keywords": ["travertine", "podium", "skincare", "cosmetic", "stone", "minimalist"] + [f"kw{i}" for i in range(25)],
+            "category_id": 8,
+            "category_name": "Graphic Resources",
+            "suggested_filename": "Gemini_Generated_Image_abc99.jpg",
+            "provider": "mock_vision",
+        }
+        with patch.object(coord2.qa_auditor, "audit_and_generate_metadata", return_value=mock_meta):
+            res_scene = coord2.process_batch_folder(mixed_batch, asset_type="scene")
+
+        assert res_scene["passed"] == 1
+        assert (mixed_batch / "result" / "travertine_podium_decor.jpg").exists()
+        assert not (mixed_batch / "result" / "travertine_podium_decor.png").exists()
+        csv_txt = (mixed_batch / "result" / "adobe_stock_metadata.csv").read_text(encoding="utf-8-sig")
+        assert "travertine_podium_decor.jpg" in csv_txt
 
 
 

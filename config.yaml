@@ -30,7 +30,7 @@ upscaling:
   skip_upscale: false                 # Set true to bypass upscaling if images already exceed 4 MP
   skip_upscale_if_above_mp: 12.0      # Smart Adaptive: skip 4x AI upscale when raw input is already >= 12 MP
   target_max_megapixels: 20.0         # Supersampling cap (16-20 MP sweet spot -> crisp 100% zoom & -75% RAM)
-  upscale_timeout_per_image_sec: 120  # Hard per-image timeout safeguard for upscayl-bin subprocess
+  upscale_timeout_per_image_sec: 600  # Inactivity/stall timeout in sec (resets automatically while Upscayl progresses; 0=off)
   models:
     isolated: "ultramix-balanced-4x"  # Balanced realism & crisp edges (no plastic texture)
     scene: "high-fidelity-4x"         # Optimal for photorealistic scenes & textures

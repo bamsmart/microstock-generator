@@ -33,6 +33,7 @@ from .logger import RunLogger
 from .manifest import ManifestManager, calculate_file_hash
 from .metadata import MetadataEngine
 from .postprocess import PostProcessor
+from .prompt_matcher import load_recent_prompt_entries, match_prompt_filename_stem
 from .qa_auditor import VisionQAAuditor
 from .qa_preview import generate_qa_contact_sheet
 from .semantic_audit import SemanticAuditor
@@ -160,6 +161,21 @@ class PipelineCoordinator:
             self.run_logger.log(msg)
         else:
             print(msg, flush=True)
+
+    def _load_prompt_entries_for_folder(self, folder: Path) -> List[Dict[str, Any]]:
+        """Discover saved Step-1 prompt JSON entries relevant to this workspace without leaking across sandboxes."""
+        search_dirs: List[Path] = [folder / "prompts", folder.parent / "prompts"]
+        if self.config.base_dir is not None:
+            try:
+                base_res = self.config.base_dir.resolve()
+                fld_res = folder.resolve()
+                if fld_res == base_res or base_res in fld_res.parents:
+                    if self.config.prompts_dir is not None:
+                        search_dirs.append(self.config.prompts_dir)
+                    search_dirs.append(self.config.base_dir / "prompts")
+            except (PermissionError, OSError):
+                pass
+        return load_recent_prompt_entries(search_dirs)
 
     def _find_cached_meta_for_result(
         self,
@@ -785,6 +801,7 @@ class PipelineCoordinator:
             if prev is None or (f.suffix.lower() == ".png" and prev.suffix.lower() != ".png"):
                 by_stem[f.stem] = f
         upscaled_files = sorted(by_stem.values(), key=lambda p: p.name)
+        prompt_entries = self._load_prompt_entries_for_folder(folder)
         processed_items: List[tuple] = []
         claimed_filenames: Set[str] = set()
 
@@ -799,12 +816,35 @@ class PipelineCoordinator:
             else:
                 img_type = image_types.get(orig_stem, "isolated" if asset_type == "auto" else asset_type)
 
+            # Strictly preserve asset type extension (.png for isolated RGBA, .jpg for scene sRGB)
             out_ext = ".png" if img_type == "isolated" else ".jpg"
             meta = metadata_by_stem.get(orig_stem, {})
             preferred_name = meta.get("suggested_filename") or sanitize_filename(
                 orig_stem, ext=out_ext, max_len=self.config.max_filename_chars
             )
             preferred_stem = Path(preferred_name).stem
+
+            matched_prompt = match_prompt_filename_stem(
+                title=str(meta.get("title", "")),
+                keywords=list(meta.get("keywords", [])),
+                orig_stem=orig_stem,
+                folder_name=folder.name,
+                asset_type=img_type,
+                prompt_entries=prompt_entries,
+                vision_slug=preferred_stem,
+            )
+            if matched_prompt is not None:
+                matched_stem, _, match_score = matched_prompt
+                preferred_stem = matched_stem
+                matched_filename = sanitize_filename(
+                    preferred_stem, ext=out_ext, max_len=self.config.max_filename_chars
+                )
+                meta["suggested_filename"] = matched_filename
+                if orig_stem in cached_meta:
+                    cached_meta[orig_stem]["suggested_filename"] = matched_filename
+                    _save_stage_cache(cache_path, stage_cache)
+                self.log(f"  🎯 Matched Step-1 prompt naming: '{orig_stem}' -> '{matched_filename}' (score={match_score})")
+
             clean_filename = sanitize_filename(preferred_stem, ext=out_ext, max_len=self.config.max_filename_chars)
             target_out = result_folder / clean_filename
 

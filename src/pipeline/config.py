@@ -64,7 +64,7 @@ class PipelineConfig:
     upscale_scale: int = 4
     skip_upscale_if_above_mp: float = 12.0
     target_max_megapixels: float = 20.0
-    upscale_timeout_per_image_sec: int = 120
+    upscale_timeout_per_image_sec: int = 600
     model_isolated: str = "ultramix-balanced-4x"
     model_scene: str = "high-fidelity-4x"
     model_fallback: str = "ultramix-balanced-4x"

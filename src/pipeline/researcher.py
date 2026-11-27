@@ -486,7 +486,7 @@ class HighDemandResearcher:
             " 1. Copy the PROMPT below into your image generator (Firefly / Flux / Midjourney / Ideogram).",
             " 2. If your generator supports Negative Prompt / Exclude / --no, paste NEGATIVE PROMPT too.",
             " 3. Match the recommended Aspect Ratio (3:2 for Scenes, 1:1 for Isolated PNGs).",
-            " 4. Save generated images into: ~/Desktop/microstock_generator/<folder_slug>/raw/",
+            " 4. Save generated images into: ~/Desktop/microstock_generator/<folder_slug>/raw/ (any filename ok; Step 2 auto-names from Suggested File)",
             " 5. Run Step 2 pipeline: Step2_Process_And_Metadata.command (Vision QC + SEO + Upscale + CSV)",
             "",
         ]
