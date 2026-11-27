@@ -8,7 +8,7 @@ import csv
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from .config import PipelineConfig
 from .local_metadata import LocalMetadataEngine
@@ -100,17 +100,10 @@ class MetadataEngine:
             return False
 
     @staticmethod
-    def export_adobe_csv(records: List[Dict[str, Any]], csv_path: Path):
-        """
-        Write or update adobe_stock_metadata.csv.
-        Adobe Stock official CSV format:
-        Filename,Title,Keywords,Category,Releases
-        """
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        file_exists = csv_path.exists()
-
+    def load_csv_filenames(csv_path: Path) -> Dict[str, Dict[str, Any]]:
+        """Read existing rows keyed by Filename from an Adobe Stock metadata CSV."""
         existing_rows: Dict[str, Dict[str, Any]] = {}
-        if file_exists:
+        if csv_path.exists():
             try:
                 with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
                     reader = csv.DictReader(f)
@@ -120,6 +113,22 @@ class MetadataEngine:
                             existing_rows[fn] = r
             except Exception:
                 pass
+        return existing_rows
+
+    @staticmethod
+    def export_adobe_csv(
+        records: List[Dict[str, Any]],
+        csv_path: Path,
+        valid_filenames: Optional[Set[str]] = None,
+    ):
+        """
+        Write or update adobe_stock_metadata.csv.
+        If valid_filenames is provided, prunes rows whose files no longer exist in result/.
+        Adobe Stock official CSV format:
+        Filename,Title,Keywords,Category,Releases
+        """
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_rows = MetadataEngine.load_csv_filenames(csv_path)
 
         for rec in records:
             fn = rec["filename"]
@@ -131,6 +140,9 @@ class MetadataEngine:
                 "Category": str(rec.get("category_id", 8)),
                 "Releases": rec.get("releases", "")
             }
+
+        if valid_filenames is not None:
+            existing_rows = {fn: row for fn, row in existing_rows.items() if fn in valid_filenames}
 
         fieldnames = ["Filename", "Title", "Keywords", "Category", "Releases"]
         with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:

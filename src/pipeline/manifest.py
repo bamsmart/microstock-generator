@@ -60,19 +60,38 @@ class ManifestManager:
         rec["uploaded_host"] = remote_host
         self.save()
 
+    def get_record_by_output_name(self, output_name: str) -> Optional[Dict[str, Any]]:
+        """Return the manifest record matching output_name, or None if not found."""
+        for rec in self.data.get("records", {}).values():
+            if rec.get("output_name") == output_name and not rec.get("manually_removed"):
+                return rec
+        return None
+
+    def mark_raw_removed(self, raw_hash: str, original_name: str, output_name: str):
+        """Record that an asset was manually deleted so retries do not re-process it."""
+        key = f"removed:{raw_hash or original_name}"
+        self.data.setdefault("records", {})[key] = {
+            "original_name": original_name,
+            "raw_hash": raw_hash,
+            "output_name": output_name,
+            "manually_removed": True,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self.save()
+
     def is_raw_already_processed(self, raw_hash: str, raw_stem: str, result_folder: Path) -> Optional[str]:
         """
         Return existing output filename if this raw asset (by raw_hash or original_name)
-        was already processed AND its output file still exists in result_folder.
+        was already processed AND its output file still exists in result_folder,
+        or was intentionally removed by the user.
         """
         for rec in self.data.get("records", {}).values():
             out_name = rec.get("output_name", "")
-            if not out_name:
-                continue
-            if not (result_folder / out_name).exists():
-                continue
             if (raw_hash and rec.get("raw_hash") == raw_hash) or rec.get("original_name") == raw_stem:
-                return out_name
+                if rec.get("manually_removed") is True:
+                    return f"{out_name or raw_stem} (manually removed)"
+                if out_name and (result_folder / out_name).exists():
+                    return out_name
         return None
 
     def record_asset(

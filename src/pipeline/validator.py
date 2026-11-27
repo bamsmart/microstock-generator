@@ -36,6 +36,13 @@ class TechnicalValidator:
             "stats": {}
         }
 
+        # 0. Check existence (file may have been manually deleted during processing)
+        if not file_path.exists():
+            results["errors"].append("File not found (removed or moved during processing).")
+            results["is_valid"] = False
+            results["missing"] = True
+            return results
+
         # 1. Filename length check (<= 30 characters for Adobe Stock CSV)
         if len(file_path.name) > self.config.max_filename_chars:
             results["errors"].append(

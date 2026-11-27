@@ -690,6 +690,106 @@ def test_isolated_edge_risk_and_pinhole_and_png_srgb():
                 assert out_alpha[cy, cx] == 255
 
 
+def test_missing_result_asset_mid_run_skips_without_crash():
+    from src.pipeline.coordinator import PipelineCoordinator
+
+    cfg = load_config()
+    cfg.skip_upscale = True
+    cfg.remove_bg = False
+    cfg.enable_ai_qa = False
+    cfg.enable_vision_metadata = False
+    cfg.embed_iptc_metadata = False
+    cfg.export_csv = True
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        batch = Path(tmp_dir) / "mid_delete_batch"
+        raw_dir = batch / "raw"
+        raw_dir.mkdir(parents=True)
+
+        # Make img_a and img_b perceptually distinct so pHash dedup keeps both
+        arr_a = np.full((2000, 2100, 3), 240, dtype=np.uint8)
+        arr_a[100:900, 100:900] = [140, 40, 40]
+        Image.fromarray(arr_a, mode="RGB").save(raw_dir / "img_a.jpg", format="JPEG")
+
+        arr_b = np.full((2000, 2100, 3), 240, dtype=np.uint8)
+        arr_b[1000:1900, 1000:1900] = [30, 120, 160]
+        Image.fromarray(arr_b, mode="RGB").save(raw_dir / "img_b.jpg", format="JPEG")
+
+        coord = PipelineCoordinator(cfg)
+        real_process_scene = coord.postprocessor.process_scene_jpeg
+
+        def delete_first_after_second(src, dst, log_callback=print):
+            ok, err = real_process_scene(src, dst, log_callback=log_callback)
+            if dst.name == "img_b.jpg":
+                first_out = dst.parent / "img_a.jpg"
+                if first_out.exists():
+                    first_out.unlink()  # Simulate user manually deleting asset mid-run
+            return ok, err
+
+        coord.postprocessor.process_scene_jpeg = delete_first_after_second
+
+        res = coord.process_batch_folder(batch, asset_type="scene")
+        assert res["passed"] == 1
+        csv_text = (batch / "result" / "adobe_stock_metadata.csv").read_text(encoding="utf-8-sig")
+        assert "img_b.jpg" in csv_text
+        assert "img_a.jpg" not in csv_text
+
+        # Re-running must skip manually deleted img_a.jpg and already-ready img_b.jpg cleanly
+        res2 = coord.process_batch_folder(batch, asset_type="scene")
+        assert res2["passed"] == 0
+        assert res2["skipped"] == 2
+
+
+def test_retry_recovers_missing_metadata_and_csv_only():
+    from src.pipeline.coordinator import PipelineCoordinator
+
+    cfg = load_config()
+    cfg.skip_upscale = True
+    cfg.remove_bg = False
+    cfg.enable_ai_qa = False
+    cfg.enable_vision_metadata = False
+    cfg.embed_iptc_metadata = False
+    cfg.export_csv = True
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        batch = Path(tmp_dir) / "recover_batch"
+        raw_dir = batch / "raw"
+        result_dir = batch / "result"
+        raw_dir.mkdir(parents=True)
+        result_dir.mkdir(parents=True)
+
+        # Both raw and result exist, but CSV and manifest.json are missing (mid-run crash simulation)
+        Image.new("RGB", (2100, 2000), (130, 95, 70)).save(raw_dir / "desk_01.jpg", format="JPEG")
+        Image.new("RGB", (2100, 2000), (130, 95, 70)).save(result_dir / "desk_01.jpg", format="JPEG")
+
+        coord = PipelineCoordinator(cfg)
+
+        def fail_if_reprocessed(*args, **kwargs):
+            raise AssertionError("Should NOT re-run post-processing when result/ already has the asset!")
+
+        coord.postprocessor.process_scene_jpeg = fail_if_reprocessed
+
+        res = coord.process_batch_folder(batch, asset_type="scene")
+        assert res["reconciled"] == 1
+        assert (result_dir / "manifest.json").exists()
+        csv_path = result_dir / "adobe_stock_metadata.csv"
+        assert csv_path.exists()
+        csv_text = csv_path.read_text(encoding="utf-8-sig")
+        assert "desk_01.jpg" in csv_text
+
+        # Stale CSV pruning: remove desk_01.jpg and add desk_02.jpg in raw+result, then re-run
+        (result_dir / "desk_01.jpg").unlink()
+        (raw_dir / "desk_01.jpg").unlink()
+        Image.new("RGB", (2100, 2000), (60, 120, 90)).save(raw_dir / "desk_02.jpg", format="JPEG")
+        Image.new("RGB", (2100, 2000), (60, 120, 90)).save(result_dir / "desk_02.jpg", format="JPEG")
+
+        res2 = coord.process_batch_folder(batch, asset_type="scene")
+        assert res2["reconciled"] == 1
+        csv_text2 = csv_path.read_text(encoding="utf-8-sig")
+        assert "desk_02.jpg" in csv_text2
+        assert "desk_01.jpg" not in csv_text2
+
+
 
 
 

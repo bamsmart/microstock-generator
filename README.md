@@ -99,9 +99,9 @@ Without API keys, Step 1 uses the curated H-90..H-120 offline commercial library
 
 ```text
 ~/Desktop/microstock_generator/
-├── Run_Step1_Research.command          # Auto-generated 1-click Step 1 shortcut
-├── Run_Microstock_Generator.command    # Auto-generated 1-click Step 4 shortcut
-├── Run_Step5_Upload.command            # Auto-generated 1-click Step 5 shortcut
+├── Step1_Research_Prompts.command      # Auto-generated 1-click Step 1 shortcut (macOS)
+├── Step2_Process_And_Metadata.command  # Auto-generated 1-click Process + QC + SEO + CSV shortcut
+├── Step3_Upload_SFTP.command           # Auto-generated 1-click SFTP Upload shortcut
 ├── prompts/
 │   ├── prompts_YYYY-MM-DD_HHMMSS.txt   # Copy-paste ready prompts + Suggested File
 │   └── prompts_YYYY-MM-DD_HHMMSS.json  # Structured backup

@@ -86,33 +86,75 @@ def ensure_desktop_launchers(base_dir: Path, project_root: Path):
             return
 
         base_dir.mkdir(parents=True, exist_ok=True)
-        launchers = [
-            (
-                base_dir / "Run_Microstock_Generator.command",
-                f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Microstock_Generator.command "$@"\n',
-                True,
-            ),
-            (
-                base_dir / "Run_Step1_Research.command",
-                f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Step1_Research.command "$@"\n',
-                True,
-            ),
-            (
-                base_dir / "Run_Step5_Upload.command",
-                f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Step5_Upload.command "$@"\n',
-                True,
-            ),
-            (
-                base_dir / "Run_Microstock_Generator.bat",
-                f'@echo off\ncd /d "{project_root}"\ncall run.bat %*\n',
-                False,
-            ),
-            (
-                base_dir / "run_microstock_generator.sh",
-                f'#!/usr/bin/env bash\ncd "{project_root}" && ./run.sh "$@"\n',
-                True,
-            ),
-        ]
+
+        # Clean up legacy / mixed-OS launcher filenames on Desktop
+        legacy_names = (
+            "Run_Microstock_Generator.bat",
+            "Run_Microstock_Generator.command",
+            "Run_Step1_Research.command",
+            "Run_Step2_Microstock_Generator.command",
+            "Run_Step5_Upload.command",
+            "run_microstock_generator.sh",
+        )
+        for old_name in legacy_names:
+            old_path = base_dir / old_name
+            if old_path.is_file():
+                old_path.unlink(missing_ok=True)
+
+        if sys.platform == "darwin":
+            launchers = [
+                (
+                    base_dir / "Step1_Research_Prompts.command",
+                    f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Step1_Research.command "$@"\n',
+                    True,
+                ),
+                (
+                    base_dir / "Step2_Process_And_Metadata.command",
+                    f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Microstock_Generator.command "$@"\n',
+                    True,
+                ),
+                (
+                    base_dir / "Step3_Upload_SFTP.command",
+                    f'#!/usr/bin/env bash\ncd "{project_root}" && ./Run_Step5_Upload.command "$@"\n',
+                    True,
+                ),
+            ]
+        elif sys.platform == "win32":
+            launchers = [
+                (
+                    base_dir / "Step1_Research_Prompts.bat",
+                    f'@echo off\ncd /d "{project_root}"\ncall run.bat --research --count 12 %*\n',
+                    False,
+                ),
+                (
+                    base_dir / "Step2_Process_And_Metadata.bat",
+                    f'@echo off\ncd /d "{project_root}"\ncall run.bat %*\n',
+                    False,
+                ),
+                (
+                    base_dir / "Step3_Upload_SFTP.bat",
+                    f'@echo off\ncd /d "{project_root}"\ncall run.bat --upload %*\n',
+                    False,
+                ),
+            ]
+        else:
+            launchers = [
+                (
+                    base_dir / "Step1_Research_Prompts.sh",
+                    f'#!/usr/bin/env bash\ncd "{project_root}" && ./run.sh --research --count 12 "$@"\n',
+                    True,
+                ),
+                (
+                    base_dir / "Step2_Process_And_Metadata.sh",
+                    f'#!/usr/bin/env bash\ncd "{project_root}" && ./run.sh "$@"\n',
+                    True,
+                ),
+                (
+                    base_dir / "Step3_Upload_SFTP.sh",
+                    f'#!/usr/bin/env bash\ncd "{project_root}" && ./run.sh --upload "$@"\n',
+                    True,
+                ),
+            ]
 
         for launcher_path, expected_content, make_exec in launchers:
             current = launcher_path.read_text(encoding="utf-8") if launcher_path.exists() else None
@@ -258,15 +300,29 @@ def run_auto_pipeline(
         res = coordinator.process_batch_folder(base_dir, asset_type=asset_type, custom_output_folder=res_dir)
         batch_summaries.append(
             f"{res['folder']}: passed={res['passed']}, skipped={res.get('skipped', 0)}, "
-            f"failed={res['failed']}, ai_rejected={res.get('ai_rejected', 0)}"
+            f"reconciled={res.get('reconciled', 0)}, failed={res['failed']}, ai_rejected={res.get('ai_rejected', 0)}"
         )
-        if res["passed"] > 0:
+        if res["passed"] > 0 or res.get("reconciled", 0) > 0:
             coordinator.print_submission_checklist()
         if coordinator.run_logger:
             coordinator.run_logger.write_summary(batch_summaries)
         return
 
+    top_result_dir = custom_output or cfg.output_dir or (base_dir / "result")
+    has_top_results = top_result_dir.exists() and bool(list(top_result_dir.glob("*.png")) + list(top_result_dir.glob("*.jpg")))
+
     if not folders and not direct_images:
+        if has_top_results:
+            res = coordinator.process_batch_folder(base_dir, asset_type=asset_type, custom_output_folder=top_result_dir)
+            batch_summaries.append(
+                f"{res['folder']}: passed={res['passed']}, skipped={res.get('skipped', 0)}, "
+                f"reconciled={res.get('reconciled', 0)}, failed={res['failed']}, ai_rejected={res.get('ai_rejected', 0)}"
+            )
+            if res.get("reconciled", 0) > 0:
+                coordinator.print_submission_checklist()
+            if coordinator.run_logger:
+                coordinator.run_logger.write_summary(batch_summaries)
+            return
         log(f"\n⚠️ No input folders or raw images found in: {base_dir}")
         log(f"   Place raw images directly in '{base_dir}' or create batch subfolders (e.g. '{base_dir}/batch1/raw'), then re-run.")
         return
@@ -280,16 +336,17 @@ def run_auto_pipeline(
         if not imgs and raw_folder.exists():
             imgs = [x for x in raw_folder.iterdir() if x.is_file() and x.suffix.lower() in VALID_EXTENSIONS and not x.name.startswith(".")]
 
-        if not imgs:
+        has_existing_results = result_folder.exists() and bool(list(result_folder.glob("*.png")) + list(result_folder.glob("*.jpg")))
+        if not imgs and not has_existing_results:
             log(f"⏭️  Skipping '{f.name}': no images found in '{f.name}/' or '{f.name}/raw/'.")
             continue
 
         res = coordinator.process_batch_folder(f, asset_type=asset_type, custom_output_folder=result_folder)
-        if res["passed"] > 0:
+        if res["passed"] > 0 or res.get("reconciled", 0) > 0:
             processed_any = True
         batch_summaries.append(
             f"{res['folder']}: passed={res['passed']}, skipped={res.get('skipped', 0)}, "
-            f"failed={res['failed']}, ai_rejected={res.get('ai_rejected', 0)}"
+            f"reconciled={res.get('reconciled', 0)}, failed={res['failed']}, ai_rejected={res.get('ai_rejected', 0)}"
         )
 
     if processed_any:
